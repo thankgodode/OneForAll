@@ -29,7 +29,7 @@ export default function App() {
   const [printJobs, setPrintJobs] = useState(initialPrintJobs);
   const [toasts, setToasts] = useState([]);
   const [modal, setModal] = useState(null);
-  const [network, setNetwork] = useState({ mode: "host", connected: true, sessionName: "Home-Studio-5G", sessionCode: "FIR-482-QLT" });
+  const [network, setNetwork] = useState({ mode: "host", connected: false, sessionName: "Home-Studio-5G", sessionCode: "FIR-482-QLT" });
   const [profile, setProfile] = useState({
     displayName: "You",
     avatarColor: "#3FDCC4",

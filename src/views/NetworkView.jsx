@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Copy, LogOut, Plus, Radio, X } from "lucide-react";
 import DeviceRow from "../components/DeviceRow";
+import { invoke } from '@tauri-apps/api/core';
 
 // Host/join management plus the live participants list.
 // `confirm` is App's `setModal` — passed down so this view can trigger the
@@ -58,7 +59,10 @@ export default function NetworkView({ network, setNetwork, devices, toast, confi
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>Start a session so nearby devices can discover and connect to you.</div>
-              <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={() => { setNetwork((n) => ({ ...n, connected: true, mode: "host" })); toast("Network session started"); }}>
+              <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={() => { 
+                invoke("app")
+                setNetwork((n) => ({ ...n, connected: true, mode: "host" 
+              })); toast("Network session started"); }}>
                 <Plus size={14} /> Start hosting
               </button>
             </div>
