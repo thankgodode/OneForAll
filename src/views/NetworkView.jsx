@@ -1,16 +1,36 @@
-import React, { useState } from "react";
-import { Copy, LogOut, Plus, Radio, X } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Copy, Link, Link2Icon, List, LogOut, Plus, Radio, X } from "lucide-react";
 import DeviceRow from "../components/DeviceRow";
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from "@tauri-apps/api/event";
 
 // Host/join management plus the live participants list.
 // `confirm` is App's `setModal` — passed down so this view can trigger the
 // shared ConfirmModal without owning any modal state itself.
 export default function NetworkView({ network, setNetwork, devices, toast, confirm }) {
   const [mode, setMode] = useState(network.mode);
+  const [services, setServices] = useState([]);
+  const [browsing, setBrowsing] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const copyCode = () => toast("Session code copied to clipboard");
   const participants = devices.filter((d) => !d.isSelf && d.status !== "offline");
+
+  useEffect(() =>{
+    async function fetch_services(){
+      await listen("mdns-service-resolved",(event) =>{
+        setServices(...services,event.payload)
+      })
+  
+      await listen("mdns-service-removed",(event) =>{
+        let names = services;
+  
+        let new_services = names.filter((el, i) => el!==event.payload);
+        setServices(new_services)
+      })
+    }
+
+    fetch_services()
+  },[browsing])
 
   return (
     <div className="fade-up" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
@@ -59,8 +79,9 @@ export default function NetworkView({ network, setNetwork, devices, toast, confi
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>Start a session so nearby devices can discover and connect to you.</div>
-              <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={() => { 
-                invoke("app")
+              <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={async() => { 
+                
+                await invoke("start_hosting")
                 setNetwork((n) => ({ ...n, connected: true, mode: "host" 
               })); toast("Network session started"); }}>
                 <Plus size={14} /> Start hosting
@@ -69,15 +90,49 @@ export default function NetworkView({ network, setNetwork, devices, toast, confi
           )
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div className="empty-state" style={{ padding: 20, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
-              <Radio size={18} />
-              <div style={{ fontSize: 12.5 }}>Searching for hosts on your LAN…</div>
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em" }}>Or enter a code manually</div>
-            <div style={{ display: "flex", gap: 8 }}>
+          {!browsing && <button className="btn btn-primary" 
+            style={{ justifyContent: "center" }} 
+            onClick={async() => { 
+              await invoke("browse_service");
+              setBrowsing(true)
+            }}
+          >
+            <Link2Icon size={14} /> Join a network
+          </button>
+          }
+          {
+            browsing && services.length < 1 && 
+              <div className="empty-state" style={{ padding: 20, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
+                <Radio size={18} />
+                <div style={{ fontSize: 12.5 }}>Searching for hosts on your LAN…</div>
+              </div>
+          }
+          {
+            services.length > 0 && 
+            (
+              <div style={{}}>
+                {services.map((el,i) =>{
+                  <List>{el}</List>
+                })}    
+              </div>
+            )
+          }
+          {browsing &&(
+            <button
+              className="btn btn-danger"
+              onClick={async()=>{
+                await invoke("stop_browsing")
+                setBrowsing(false)
+              }}
+            >
+              Stop browsing
+            </button>
+          )}
+            {/* <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em" }}>Or enter a code manually</div> */}
+            {/* <div style={{ display: "flex", gap: 8 }}>
               <input type="text" placeholder="e.g. FIR-482-QLT" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} style={{ flex: 1 }} className="mono" />
               <button className="btn btn-primary" disabled={!joinCode} onClick={() => toast("Connecting to network…")}>Join</button>
-            </div>
+            </div> */}
           </div>
         )}
       </div>

@@ -1,5 +1,6 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 
 // Generic confirmation dialog for destructive actions.
 // `modal` shape: { title, body, confirmLabel?, onConfirm }. Pass null to hide.
@@ -20,7 +21,11 @@ export default function ConfirmModal({ modal, onClose }) {
           <button
             className="btn btn-danger"
             style={{ background: "var(--red)", color: "#2A0B0D", borderColor: "var(--red)" }}
-            onClick={() => { modal.onConfirm(); onClose(); }}
+            onClick={async() => { 
+              await invoke("stop_hosting");
+              modal.onConfirm(); 
+              onClose(); 
+            }}
           >
             {modal.confirmLabel || "Confirm"}
           </button>
