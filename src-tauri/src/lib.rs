@@ -13,6 +13,7 @@ fn default_download_dir() -> std::path::PathBuf {
     dirs::download_dir().unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(DeviceInfo::new()))
