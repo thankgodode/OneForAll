@@ -22,6 +22,7 @@ pub fn run() {
         .manage(Arc::new(TcpState::new()))
         .manage(Arc::new(AppSettings::new(default_download_dir())))
         .manage(Arc::new(PendingIncoming::new()))
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             // device
             state::device::get_device_name,
@@ -45,6 +46,8 @@ pub fn run() {
             network::receive::respond_to_incoming_file,
             network::transfers::cancel_transfer,
         ])
+        // .invoke_handler(tauri::generate_handler![start_service,stop_advertising, browse_service, stop_browsing, start_hosting, stop_hosting])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
