@@ -26,4 +26,7 @@ tokio = { version = "1.53.1", features = ["full"] }
 axum = { version = "0.8.9", features = ["ws"] }
 mdns-sd = "0.21.0"
 uuid = { version = "1.24.0", features = ["v4"] }
-
+bincode = "1"
+thiserror = "1"
+futures = "0.3.34"
+hostname = "0.4.2"

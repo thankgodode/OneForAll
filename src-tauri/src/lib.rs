@@ -1,6 +1,9 @@
 use commands::{start_service,stop_advertising, browse_service, stop_browsing, start_hosting, stop_hosting, MdnsState,TcpState};
+use connection::ControlMessage;
 
 mod commands;
+mod connection;
+mod channels;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

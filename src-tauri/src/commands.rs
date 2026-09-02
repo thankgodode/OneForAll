@@ -6,15 +6,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{task::JoinHandle,net::{TcpListener,TcpSocket,TcpStream}};
 
-#[derive(serde::Serialize,serde::Deserialize)]
-enum ConnectionKind{
-    Control,
-    Transfer{
-        transfer_id:String,
-        filename:String,
-        usize:u64
-    }
-}
+use crate::connection::{ControlMessage, PeerHandle,PeerInfo};
 
 pub struct TcpState{
     listener_task: Mutex<Option<JoinHandle<()>>>,
@@ -186,6 +178,14 @@ pub async fn stop_hosting(
     stop_advertising(mdns_state).await.unwrap();
 
     Ok(())
+}
+
+pub async fn join_server(addr:SocketAddr)->Result<TcpStream,String>{
+    let socket = TcpSocket::new_v4().map_err(|e| e.to_string())?;
+    socket.set_reuseaddr(true).map_err(|e| e.to_string())?;
+    let stream = socket.connect(addr).await.map_err(|e| e.to_string())?;
+
+    Ok(stream)
 }
 
 // async fn handle_conection(mut socket: TcpStream, addr: SocketAddr, app:AppHandle){
