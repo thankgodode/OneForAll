@@ -13,7 +13,7 @@ fn default_download_dir() -> std::path::PathBuf {
     dirs::download_dir().unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-fn run() {
+pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(DeviceInfo::new()))
         .manage(Arc::new(MdnsState::new()))
