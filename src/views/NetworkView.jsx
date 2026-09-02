@@ -80,8 +80,8 @@ export default function NetworkView({ network, setNetwork, devices, toast, confi
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>Start a session so nearby devices can discover and connect to you.</div>
               <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={async() => { 
+                await invoke("start_hosting",{sessionName:"first-session", instanceName:"THANKGOD-PC"});
                 
-                await invoke("start_hosting")
                 setNetwork((n) => ({ ...n, connected: true, mode: "host" 
               })); toast("Network session started"); }}>
                 <Plus size={14} /> Start hosting
