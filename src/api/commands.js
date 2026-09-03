@@ -1,0 +1,46 @@
+import { invoke } from "@tauri-apps/api/core";
+
+// Thin, one-to-one wrappers around every #[tauri::command] the backend
+// exposes. Nothing here holds state or makes decisions — that's App.jsx's
+// job. Keeping these as named functions (rather than calling invoke()
+// directly from components) means the backend's argument names only need
+// to be right in ONE place if they ever change.
+
+// --- device / settings ---
+export const getDeviceName = () => invoke("get_device_name");
+export const setConfirmIncomingFiles = (value) => invoke("set_confirm_incoming_files", { value });
+export const setDownloadDir = (path) => invoke("set_download_dir", { path });
+
+// --- session access control (host side) ---
+export const setJoinCode = (code) => invoke("set_join_code", { code });
+export const setAutoAccept = (value) => invoke("set_auto_accept", { value });
+
+// --- mdns ---
+export const browseService = () => invoke("browse_service");
+export const stopBrowsing = () => invoke("stop_browsing");
+export const advertiseService = (port, instanceName) => invoke("advertise_service", { port, instanceName });
+export const stopAdvertising = () => invoke("stop_advertising");
+
+// --- listening (every participant, host or not, does this once at startup) ---
+export const startListening = () => invoke("start_listening");
+
+// --- hosting (advertises the ALREADY-bound listener from startListening) ---
+export const startHosting = (sessionName, instanceName) =>
+  invoke("start_hosting", { sessionName, instanceName });
+export const stopHosting = () => invoke("stop_hosting");
+
+// --- join / roster ---
+// myListenPort must come from startListening(), called once at app boot —
+// it's what lets the host hand out a dialable address for THIS device.
+export const joinNetwork = (hostAddr, displayName, myListenPort) =>
+  invoke("join_network", { hostAddr, displayName, myListenPort });
+export const leaveNetwork = () => invoke("leave_network");
+export const respondToJoin = (requestId, accept) => invoke("respond_to_join", { requestId, accept });
+export const kickPeer = (peerId) => invoke("kick_peer", { peerId });
+
+// --- transfers ---
+export const sendFileToPeers = (myPeerId, filePath, targetPeerIds) =>
+  invoke("send_file_to_peers", { myPeerId, filePath, targetPeerIds });
+export const respondToIncomingFile = (transferId, accept) =>
+  invoke("respond_to_incoming_file", { transferId, accept });
+export const cancelTransfer = (transferId) => invoke("cancel_transfer", { transferId });

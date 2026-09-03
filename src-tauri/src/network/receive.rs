@@ -1,4 +1,4 @@
-use crate::events::{IncomingFileRequest, TransferProgress};
+use crate::events::{IncomingFileRequest, TransferProgress, TransferStarted};
 use crate::protocol::PeerInfo;
 use crate::state::{AppSettings, PendingIncoming, TcpState, TransferHandle};
 use crate::util::{sanitize_filename, unique_path};
@@ -38,7 +38,7 @@ pub async fn receive_incoming_transfer(
             transfer_id: transfer_id.clone(),
             filename: filename.clone(),
             size,
-            from: from_peer,
+            from: from_peer.clone(), // cloned — still needed below for transfer-started
         });
 
         match rx.await {
@@ -49,6 +49,19 @@ pub async fn receive_incoming_transfer(
             }
         }
     }
+
+    // Fires exactly once, right before this transfer actually starts —
+    // whether or not confirmation was required, this is always the event
+    // that creates the row on the frontend (see the note on
+    // `events::TransferStarted`).
+    let _ = app.emit("transfer-started", TransferStarted {
+        transfer_id: transfer_id.clone(),
+        peer_id: from_peer.id.clone(),
+        peer_name: from_peer.display_name.clone(),
+        filename: filename.clone(),
+        size,
+        direction: "receive",
+    });
 
     let safe_name = sanitize_filename(&filename);
     let download_dir = settings.download_dir();

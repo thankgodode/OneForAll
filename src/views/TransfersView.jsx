@@ -11,8 +11,8 @@ export default function TransfersView({ transfers, onAction }) {
   const filtered = transfers.filter((t) => matches(t, tab));
 
   return (
-    <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 20, borderBottom: "1px solid var(--border)" }}>
+    <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", gap: 14, borderBottom: "1px solid var(--border)" }}>
         {["active", "completed", "failed"].map((tb) => (
           <button
             key={tb}

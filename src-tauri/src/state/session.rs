@@ -1,15 +1,19 @@
 use crate::protocol::{ControlMessage, PeerInfo};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
-/// A joined peer's live connection handle. `outbox` lets other parts of
-/// the app (kick_peer, roster broadcasts) push a message down this
-/// specific peer's control connection — the connection's own writer task
-/// (see `network::control`) owns the actual socket half.
+/// A peer this device considers a member of the current session.
+/// `outbox` is only `Some` when this device is the one that ACCEPTED
+/// this peer's join — i.e. this device is acting as host for that
+/// connection, and can push messages down it. When a joined CLIENT
+/// mirrors its own copy of the roster (see `network::join`), it has no
+/// direct connection to those other peers, so `outbox` is `None` — the
+/// entry exists purely so `is_member`/`peer_info` work identically
+/// whether this device is the host or a joined client.
 pub struct PeerHandle {
     pub info: PeerInfo,
-    pub outbox: UnboundedSender<ControlMessage>,
+    pub outbox: Option<UnboundedSender<ControlMessage>>,
 }
 
 /// A join request sent to the frontend for approval but not yet decided.
@@ -51,17 +55,32 @@ impl SessionState {
         self.peers.lock().unwrap().get(peer_id).map(|p| p.info.clone())
     }
 
-    pub fn insert_peer(&self, info: PeerInfo, outbox: UnboundedSender<ControlMessage>) {
+    pub fn insert_peer(&self, info: PeerInfo, outbox: Option<UnboundedSender<ControlMessage>>) {
         self.peers.lock().unwrap().insert(info.id.clone(), PeerHandle { info, outbox });
+    }
+
+    /// Convenience for the mirrored-roster case described on `PeerHandle`
+    /// — used by a joined client, never by a host accepting a real join.
+    pub fn insert_peer_mirror(&self, info: PeerInfo) {
+        self.insert_peer(info, None);
     }
 
     pub fn remove_peer(&self, peer_id: &str) {
         self.peers.lock().unwrap().remove(peer_id);
     }
 
+    /// Used when THIS device's own membership ends (kicked, disconnected,
+    /// or left) — clears the whole mirrored roster at once, as opposed to
+    /// `remove_peer` which drops a single other peer.
+    pub fn clear_all_peers(&self) {
+        self.peers.lock().unwrap().clear();
+    }
+
     pub fn broadcast(&self, msg: ControlMessage) {
         for peer in self.peers.lock().unwrap().values() {
-            let _ = peer.outbox.send(msg.clone());
+            if let Some(outbox) = &peer.outbox {
+                let _ = outbox.send(msg.clone());
+            }
         }
     }
 
@@ -75,4 +94,18 @@ impl SessionState {
             _ => false,
         }
     }
+}
+
+/// Backs the "Require approval" toggle and optional join code in the
+/// frontend's Network view. Both just mutate `SessionState` directly —
+/// `control::handle_control_connection` reads them fresh on every join
+/// attempt, so a change here takes effect on the very next connection.
+#[tauri::command]
+pub fn set_join_code(session: tauri::State<'_, Arc<SessionState>>, code: Option<String>) {
+    *session.code.lock().unwrap() = code;
+}
+
+#[tauri::command]
+pub fn set_auto_accept(session: tauri::State<'_, Arc<SessionState>>, value: bool) {
+    *session.auto_accept.lock().unwrap() = value;
 }

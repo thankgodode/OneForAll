@@ -1,206 +1,211 @@
-import React, { useEffect, useState } from "react";
-import { Copy, Link, Link2Icon, List, LogOut, Plus, Radio, X } from "lucide-react";
+import React, { useState } from "react";
+import { Check, LogOut, Plus, Radio, Wifi, X } from "lucide-react";
 import DeviceRow from "../components/DeviceRow";
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from "@tauri-apps/api/event";
+import Toggle from "../components/Toggle";
+import { toUiDevice } from "../utils/peer";
 
-// Host/join management plus the live participants list.
-// `confirm` is App's `setModal` — passed down so this view can trigger the
-// shared ConfirmModal without owning any modal state itself.
-export default function NetworkView({ network, setNetwork, devices, toast, confirm }) {
-  const [mode, setMode] = useState(network.mode);
-  const [services, setServices] = useState([]);
-  const [browsing, setBrowsing] = useState(false);
-  const [joinCode, setJoinCode] = useState("");
-  const copyCode = () => toast("Session code copied to clipboard");
-  const participants = devices.filter((d) => !d.isSelf && d.status !== "offline");
+// Three distinct states based on network.role — "none" shows host/join
+// tabs, "host" shows session management, "joined" shows a participant
+// view with a Leave button. Unlike the earlier mock, discovered hosts
+// come from real mDNS events and clicking one sends a real join request
+// that may need the host's approval before it resolves.
+export default function NetworkView({
+  network, deviceName, discoveredHosts, pendingJoins, devices, accessControl,
+  onStartHosting, onStopHosting, onJoin, onLeaveNetwork, onRespondToJoin, onKick,
+  onSetAccessControl, toast, confirm,
+}) {
+  const [tab, setTab] = useState("host");
+  const [sessionNameInput, setSessionNameInput] = useState(`${deviceName}'s Network`);
+  const [manualAddr, setManualAddr] = useState("");
+  const [requireApproval, setRequireApproval] = useState(accessControl.requireApproval);
+  const [joinCode, setJoinCode] = useState(accessControl.joinCode);
 
-  useEffect(() => {
-    let unlistenResolved;
-    let unlistenRemoved;
+  const participants = devices.filter((d) => !d.isSelf);
+  // Filter out our own advertised service so hosting doesn't show up as
+  // a joinable option in our own discovery list.
+  const otherHosts = discoveredHosts.filter((h) => !h.fullname.startsWith(deviceName));
 
-    const setupListeners = async () => {
-      unlistenResolved = await listen(
-        "mdns-service-resolved",
-        (event) => {
-          setServices((current) => {
-            const updated = new Map(current);
+  const applyAccessControl = (nextRequireApproval, nextCode) => {
+    setRequireApproval(nextRequireApproval);
+    setJoinCode(nextCode);
+    onSetAccessControl(nextRequireApproval, nextCode);
+  };
 
-            updated.set(event.payload[0], {
-              name: event.payload[0],
-              address: event.payload[1],
-            });
+  if (network.role === "host") {
+    return (
+      <div className="fade-up" style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em" }}>Session name</div>
+            <div className="disp" style={{ fontSize: 16, fontWeight: 600, marginTop: 3 }}>{network.sessionName}</div>
+          </div>
 
-            return updated;
-        });
-        }
-      );
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 4, borderTop: "1px solid var(--border)" }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 500 }}>Require approval to join</div>
+              <div style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>Off = anyone nearby joins instantly</div>
+            </div>
+            <Toggle on={requireApproval} onClick={() => applyAccessControl(!requireApproval, joinCode)} />
+          </div>
 
-      unlistenRemoved = await listen(
-        "mdns-service-removed",
-        (event) => {
-          setServices((current) => {
-            const updated = new Map(current);
+          <div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".03em" }}>
+              Optional join code
+            </div>
+            <div style={{ display: "flex", gap: 7 }}>
+              <input
+                type="text" className="mono" placeholder="Leave blank to require approval only"
+                value={joinCode} onChange={(e) => setJoinCode(e.target.value)} style={{ flex: 1 }}
+              />
+              <button className="btn btn-ghost" onClick={() => applyAccessControl(requireApproval, joinCode)}>Set</button>
+            </div>
+          </div>
 
-            updated.delete(event.payload);
+          <button className="btn btn-danger" onClick={() => confirm({
+            title: "Stop hosting network?",
+            body: "Everyone connected will be disconnected immediately.",
+            confirmLabel: "Stop hosting",
+            onConfirm: onStopHosting,
+          })}>
+            <LogOut size={13} /> Stop hosting
+          </button>
+        </div>
 
-            return updated;
-          });
-        }
-      );
-      
-      console.log("SERVICES: ", services);
-    };
+        <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 10 }}>
+          {pendingJoins.length > 0 && (
+            <div>
+              <div className="panel-head"><div className="disp" style={{ fontSize: 13, fontWeight: 600 }}>Waiting for approval</div></div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {pendingJoins.map((peer) => (
+                  <div key={peer.id} className="device-row">
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{peer.display_name}</div>
+                      <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{peer.device_name}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 5 }}>
+                      <button className="btn-icon" onClick={() => onRespondToJoin(peer.id, true)}><Check size={13} /></button>
+                      <button className="btn-icon" onClick={() => onRespondToJoin(peer.id, false)}><X size={13} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-    setupListeners();
+          <div className="panel-head"><div className="disp" style={{ fontSize: 13, fontWeight: 600 }}>Connected participants</div><span className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{participants.length}</span></div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {participants.map((d) => (
+              <DeviceRow key={d.id} device={d} size={28} trailing={
+                <button className="btn-icon" onClick={() => confirm({
+                  title: `Remove ${d.name}?`,
+                  body: `${d.name} will be disconnected from this network session.`,
+                  confirmLabel: "Remove",
+                  onConfirm: () => onKick(d.id),
+                })}>
+                  <X size={12} />
+                </button>
+              } />
+            ))}
+            {participants.length === 0 && <div className="empty-state" style={{ padding: 20 }}>No one's joined yet</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
+  if (network.role === "joined") {
+    return (
+      <div className="fade-up" style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em" }}>Connected to</div>
+            <div className="disp" style={{ fontSize: 16, fontWeight: 600, marginTop: 3 }}>{network.sessionName}</div>
+          </div>
+          <button className="btn btn-danger" onClick={onLeaveNetwork}><LogOut size={13} /> Leave network</button>
+        </div>
 
-    return () => {
-      unlistenResolved?.();
-      unlistenRemoved?.();
-    };
+        <div className="card" style={{ flex: 1, minWidth: 320 }}>
+          <div className="panel-head"><div className="disp" style={{ fontSize: 13, fontWeight: 600 }}>Connected participants</div><span className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{participants.length}</span></div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {participants.map((d) => <DeviceRow key={d.id} device={d} size={28} />)}
+            {participants.length === 0 && <div className="empty-state" style={{ padding: 20 }}>Just you and the host so far</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-
-  }, [browsing]);
-
+  // network.role === "none" — pick host or join
   return (
-    <div className="fade-up" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+    <div className="fade-up" style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
       <div className="card" style={{ flex: 1, minWidth: 320 }}>
-        <div style={{ display: "flex", gap: 4, background: "var(--bg-elevated)", padding: 4, borderRadius: "var(--radius-sm)", marginBottom: 18, border: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", gap: 3, background: "var(--bg-elevated)", padding: 3, borderRadius: "var(--radius-sm)", marginBottom: 14, border: "1px solid var(--border)" }}>
           {["host", "join"].map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className="btn"
-              style={{ flex: 1, justifyContent: "center", background: mode === m ? "var(--panel)" : "transparent", color: mode === m ? "var(--text-primary)" : "var(--text-tertiary)", border: "none" }}
-            >
+            <button key={m} onClick={() => setTab(m)} className="btn" style={{
+              flex: 1, justifyContent: "center", background: tab === m ? "var(--panel)" : "transparent",
+              color: tab === m ? "var(--text-primary)" : "var(--text-tertiary)", border: "none",
+            }}>
               {m === "host" ? "Host network" : "Join network"}
             </button>
           ))}
         </div>
 
-        {mode === "host" ? (
-          network.connected ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em" }}>Session name</div>
-                <div className="disp" style={{ fontSize: 18, fontWeight: 600, marginTop: 4 }}>{network.sessionName}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em", marginBottom: 6 }}>Connection code</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <div className="mono" style={{ flex: 1, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 12px", fontSize: 15, letterSpacing: "0.06em", color: "var(--teal)" }}>
-                    {network.sessionCode}
-                  </div>
-                  <button className="btn-icon" onClick={copyCode}><Copy size={14} /></button>
-                </div>
-              </div>
-              <button
-                className="btn btn-danger"
-                onClick={() => confirm({
-                  title: "Stop hosting network?",
-                  body: "Everyone connected will be disconnected immediately.",
-                  confirmLabel: "Stop hosting",
-                  onConfirm: () => { setNetwork((n) => ({ ...n, connected: false })); toast("Stopped hosting the network"); },
-                })}
-              >
-                <LogOut size={14} /> Stop hosting
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>Start a session so nearby devices can discover and connect to you.</div>
-              <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={async() => { 
-                await invoke("start_hosting",{sessionName:"first-session", instanceName:"THANKGOD-PC"});
-                
-                setNetwork((n) => ({ ...n, connected: true, mode: "host" 
-              })); toast("Network session started"); }}>
-                <Plus size={14} /> Start hosting
-              </button>
-            </div>
-          )
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {!browsing && <button className="btn btn-primary" 
-            style={{ justifyContent: "center" }} 
-            onClick={async() => { 
-              await invoke("browse_service");
-              setBrowsing(true)
-            }}
-          >
-            <Link2Icon size={14} /> Join a network
-          </button>
-          }
-          {
-            browsing && services.size < 1 && 
-              <div className="empty-state" style={{ padding: 20, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
-                <Radio size={18} />
-                <div style={{ fontSize: 12.5 }}>Searching for hosts on your LAN…</div>
-              </div>
-          }
-          {services.size > 0 && (
+        {tab === "host" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
-              {[...services.values()].map((service) => {
-                return(
-                  <div key={service.name} style={{ display: "flex", flexDirection: "column", gap: 2, padding: 8, background: "var(--bg-elevated)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", marginBottom: 6, cursor:"pointer"}}>
-                    <label>
-                      {service.name}
-                    </label>
-                  </div>
-                )
-              })}
+              <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".03em" }}>Session name</div>
+              <input type="text" value={sessionNameInput} onChange={(e) => setSessionNameInput(e.target.value)} style={{ width: "100%" }} />
             </div>
-          )}
-          {browsing &&(
-            <button
-              className="btn btn-danger"
-              onClick={async()=>{
-                await invoke("stop_browsing")
-                setServices(new Map())
-                setBrowsing(false)
-              }}
-            >
-              Stop browsing
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              Nearby devices will be able to discover this session and request to join.
+            </div>
+            <button className="btn btn-primary" style={{ justifyContent: "center" }} onClick={() => onStartHosting(sessionNameInput)}>
+              <Plus size={13} /> Start hosting
             </button>
-          )}
-            {/* <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em" }}>Or enter a code manually</div> */}
-            {/* <div style={{ display: "flex", gap: 8 }}>
-              <input type="text" placeholder="e.g. FIR-482-QLT" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} style={{ flex: 1 }} className="mono" />
-              <button className="btn btn-primary" disabled={!joinCode} onClick={() => toast("Connecting to network…")}>Join</button>
-            </div> */}
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {network.joinStatus === "connecting" && (
+              <div className="empty-state" style={{ padding: 16, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
+                <Radio size={16} /><div style={{ fontSize: 12 }}>Connecting…</div>
+              </div>
+            )}
+            {network.joinStatus === "pending" && (
+              <div className="empty-state" style={{ padding: 16, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
+                <Radio size={16} /><div style={{ fontSize: 12 }}>Waiting for the host to approve…</div>
+              </div>
+            )}
+
+            {network.joinStatus === "idle" && (
+              <>
+                <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: ".03em" }}>Nearby hosts</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {otherHosts.map((h) => {
+                    const label = h.fullname.split(".")[0];
+                    return (
+                      <div key={h.fullname} className="device-row" style={{ cursor: "pointer" }} onClick={() => onJoin(h.addr)}>
+                        <div style={{ width: 30, height: 30, borderRadius: 7, background: "var(--teal-glow)", color: "var(--teal)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <Wifi size={14} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</div>
+                          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{h.addr}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {otherHosts.length === 0 && <div className="empty-state" style={{ padding: 20 }}>Searching for hosts on your LAN…</div>}
+                </div>
+
+                <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".03em", marginTop: 6 }}>Or connect by address</div>
+                <div style={{ display: "flex", gap: 7 }}>
+                  <input type="text" placeholder="192.168.1.42:51820" value={manualAddr} onChange={(e) => setManualAddr(e.target.value)} style={{ flex: 1 }} className="mono" />
+                  <button className="btn btn-primary" disabled={!manualAddr} onClick={() => onJoin(manualAddr)}>Join</button>
+                </div>
+              </>
+            )}
           </div>
         )}
-      </div>
-
-      <div className="card" style={{ flex: 1, minWidth: 320 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div className="disp" style={{ fontSize: 15, fontWeight: 600 }}>Connected participants</div>
-          <span className="mono" style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{participants.length}</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {participants.map((d) => (
-            <DeviceRow
-              key={d.id}
-              device={d}
-              size={32}
-              trailing={
-                network.mode === "host" && network.connected ? (
-                  <button
-                    className="btn-icon"
-                    onClick={() => confirm({
-                      title: `Remove ${d.name}?`,
-                      body: `${d.name} will be disconnected from this network session.`,
-                      confirmLabel: "Remove",
-                      onConfirm: () => toast(`${d.name} removed from the network`),
-                    })}
-                  >
-                    <X size={13} />
-                  </button>
-                ) : undefined
-              }
-            />
-          ))}
-        </div>
       </div>
     </div>
   );
