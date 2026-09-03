@@ -31,9 +31,17 @@ pub enum ConnectionKind {
     },
 }
 
+/// A stand-in peer_id representing "the host of the session I joined."
+/// The host never goes through `JoinRequest` itself, so it has no id in
+/// the same namespace as joined peers by default — using this constant
+/// on both sides means `SessionState::is_member` can treat "sent by the
+/// host" and "sent by a joined peer" identically, with no special case
+/// in `dispatch::handle_connection`.
+pub const HOST_PEER_ID: &str = "host";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ControlMessage {
-    JoinRequest { display_name: String, device_name: String, code: Option<String> },
+    JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16 },
     JoinPending,
     JoinAccepted { session_name: String, peer_id: String, roster: Vec<PeerInfo> },
     JoinRejected { reason: String },

@@ -1,4 +1,4 @@
-use crate::events::TransferProgress;
+use crate::events::{TransferProgress, TransferStarted};
 use crate::protocol::{send_msg, ConnectionKind, PeerInfo};
 use crate::state::{SessionState, TcpState, TransferHandle};
 use std::path::Path;
@@ -50,11 +50,6 @@ pub async fn send_file_to_peers(
 async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, file_path: Arc<String>, target: PeerInfo, my_peer_id: String) {
     let transfer_id = uuid::Uuid::new_v4().to_string();
 
-    let Ok(mut socket) = TcpStream::connect(&target.addr).await else {
-        let _ = app.emit("transfer-failed", (&transfer_id, "Connection failed"));
-        return;
-    };
-
     let Ok(metadata) = tokio::fs::metadata(&*file_path).await else {
         let _ = app.emit("transfer-failed", (&transfer_id, "File no longer exists"));
         return;
@@ -64,6 +59,25 @@ async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, file_path: Arc<
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let size = metadata.len();
+
+    // Emitted before connecting, on purpose — the frontend has no other
+    // way to learn this transfer_id exists (see the note on
+    // `events::TransferStarted`). If the connection below fails, the row
+    // this creates is what `transfer-failed` then updates, rather than
+    // there being no row to update at all.
+    let _ = app.emit("transfer-started", TransferStarted {
+        transfer_id: transfer_id.clone(),
+        peer_id: target.id.clone(),
+        peer_name: target.display_name.clone(),
+        filename: filename.clone(),
+        size,
+        direction: "send",
+    });
+
+    let Ok(mut socket) = TcpStream::connect(&target.addr).await else {
+        let _ = app.emit("transfer-failed", (&transfer_id, "Connection failed"));
+        return;
+    };
 
     let sent_header = send_msg(&mut socket, &ConnectionKind::Transfer {
         peer_id: my_peer_id, transfer_id: transfer_id.clone(), filename, size,

@@ -18,12 +18,17 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         Err(_) => return,
     };
 
-    let ControlMessage::JoinRequest { display_name, device_name, code } = msg else {
+    let ControlMessage::JoinRequest { display_name, device_name, code, listen_port } = msg else {
         return; // first message on a Control connection must be a join request
     };
 
     let request_id = uuid::Uuid::new_v4().to_string();
-    let info = PeerInfo { id: request_id.clone(), display_name, device_name, addr: addr.to_string() };
+    // Use the peer's OWN reported listening port, not the source port of
+    // this incoming connection — that source port is ephemeral and
+    // nothing is listening on it. The IP is still trustworthy (it's
+    // where the bytes actually came from); only the port needs replacing.
+    let dialable_addr = format!("{}:{}", addr.ip(), listen_port);
+    let info = PeerInfo { id: request_id.clone(), display_name, device_name, addr: dialable_addr };
 
     let auto_accept = *session.auto_accept.lock().unwrap();
     let admitted = if auto_accept || session.code_matches(&code) {
@@ -46,7 +51,7 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     }
 
     let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel();
-    session.insert_peer(info.clone(), outbox_tx);
+    session.insert_peer(info.clone(), Some(outbox_tx));
 
     // Extracted into locals BEFORE the `.await` below on purpose: a
     // `MutexGuard` built inline inside an awaited call's arguments lives

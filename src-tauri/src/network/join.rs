@@ -1,21 +1,25 @@
-use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, PeerInfo};
-use crate::state::{DeviceInfo, SessionState};
+use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, PeerInfo, HOST_PEER_ID};
+use crate::state::{ClientState, DeviceInfo, SessionState};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
+use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 
 /// Called when the user clicks a discovered host, or connects to one
-/// entered manually. Sends a join request, then waits — possibly a
-/// while, if the host requires approval — for a decision. Every new
-/// connection must open with a `ConnectionKind` frame before anything
-/// else, including this one: it's what lets `dispatch::handle_connection`
-/// on the host side tell this apart from an incoming file transfer.
+/// entered manually. `my_listen_port` MUST come from an already-completed
+/// `listener::start_listening` call — it's what lets the host hand out a
+/// dialable address for THIS device to everyone else in the roster,
+/// instead of the ephemeral source port of this very connection.
 #[tauri::command]
 pub async fn join_network(
     app: AppHandle,
     device: State<'_, Arc<DeviceInfo>>,
+    client: State<'_, Arc<ClientState>>,
+    session: State<'_, Arc<SessionState>>,
     host_addr: String,
     display_name: String,
+    my_listen_port: u16,
 ) -> Result<PeerInfo, String> {
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ConnectionKind::Control).await.map_err(|e| e.to_string())?;
@@ -23,6 +27,7 @@ pub async fn join_network(
         display_name,
         device_name: device.name.clone(),
         code: None,
+        listen_port: my_listen_port,
     }).await.map_err(|e| e.to_string())?;
 
     loop {
@@ -32,8 +37,52 @@ pub async fn join_network(
             }
             Ok(ControlMessage::JoinAccepted { session_name, peer_id, roster }) => {
                 let _ = app.emit("joined-network", (&session_name, &roster));
-                let me = PeerInfo { id: peer_id, display_name: "You".into(), device_name: device.name.clone(), addr: host_addr };
-                tokio::spawn(listen_for_roster_updates(socket, app));
+                let me = PeerInfo {
+                    id: peer_id.clone(),
+                    display_name: "You".into(),
+                    device_name: device.name.clone(),
+                    addr: format!("127.0.0.1:{my_listen_port}"), // not used for dialing self; kept for shape consistency
+                };
+
+                // Mirror the roster into this device's own SessionState so
+                // `dispatch::handle_connection`'s membership check works
+                // the same way here as it does on the host — including a
+                // stand-in entry for the host itself under HOST_PEER_ID,
+                // since the host never goes through JoinRequest to get a
+                // "real" id.
+                session.insert_peer_mirror(PeerInfo {
+                    id: HOST_PEER_ID.into(),
+                    display_name: "Host".into(),
+                    device_name: session_name.clone(),
+                    addr: host_addr.clone(),
+                });
+                for peer in &roster {
+                    session.insert_peer_mirror(peer.clone());
+                }
+
+                // Split so the connection can be read from (roster updates)
+                // and written to (a future Leave) independently. The write
+                // half lives behind an mpsc channel — same "outbox" shape
+                // as the host side's PeerHandle — so `leave_network` can
+                // send through it without this function needing to keep
+                // running or expose the raw socket.
+                let (read_half, mut write_half) = socket.into_split();
+                let (tx, mut rx) = mpsc::unbounded_channel();
+                *client.outbox.lock().unwrap() = Some(tx);
+                *client.my_peer_id.lock().unwrap() = Some(peer_id);
+
+                tokio::spawn(async move {
+                    while let Some(msg) = rx.recv().await {
+                        if send_msg(&mut write_half, &msg).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                let client_for_cleanup = client.inner().clone();
+                let session_for_updates = session.inner().clone();
+                tokio::spawn(listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates));
+
                 return Ok(me);
             }
             Ok(ControlMessage::JoinRejected { reason }) => return Err(reason),
@@ -43,19 +92,41 @@ pub async fn join_network(
 }
 
 /// Runs for as long as this client stays joined — the connection itself
-/// IS the membership. If it closes for any reason, the host has already
-/// cleaned up its side (see `control::handle_control_connection`); this
-/// task's only job is telling the frontend so the UI can update.
-async fn listen_for_roster_updates(mut socket: TcpStream, app: AppHandle) {
+/// IS the membership. Keeps the local mirrored roster (`session`) in
+/// sync as peers come and go, and clears `ClientState` on exit so
+/// `leave_network` doesn't try to send through a connection that's
+/// already gone.
+async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>) {
     loop {
-        match recv_msg::<ControlMessage, _>(&mut socket).await {
-            Ok(ControlMessage::PeerJoined(p)) => { let _ = app.emit("peer-joined", p); }
-            Ok(ControlMessage::PeerLeft { peer_id }) => { let _ = app.emit("peer-left", peer_id); }
+        match recv_msg::<ControlMessage, _>(&mut read_half).await {
+            Ok(ControlMessage::PeerJoined(p)) => {
+                session.insert_peer_mirror(p.clone());
+                let _ = app.emit("peer-joined", p);
+            }
+            Ok(ControlMessage::PeerLeft { peer_id }) => {
+                session.remove_peer(&peer_id);
+                let _ = app.emit("peer-left", peer_id);
+            }
             Ok(ControlMessage::Kick { reason }) => { let _ = app.emit("kicked", reason); break; }
             Err(_) => { let _ = app.emit("disconnected-from-network", ()); break; }
             _ => {}
         }
     }
+    client.clear();
+    session.clear_all_peers();
+}
+
+/// Sends a clean `Leave` down the still-open control connection, then
+/// drops the sender — the writer task in `join_network` ends naturally
+/// once the channel closes after forwarding it. Optimistic on the local
+/// side: `ClientState` clears immediately rather than waiting for the
+/// host to acknowledge, since there's nothing meaningful to wait for.
+#[tauri::command]
+pub fn leave_network(client: State<'_, Arc<ClientState>>) {
+    if let Some(tx) = client.outbox.lock().unwrap().take() {
+        let _ = tx.send(ControlMessage::Leave);
+    }
+    *client.my_peer_id.lock().unwrap() = None;
 }
 
 /// Host side: resolves a pending join request the frontend showed the
@@ -73,6 +144,8 @@ pub fn respond_to_join(session: State<'_, Arc<SessionState>>, request_id: String
 #[tauri::command]
 pub fn kick_peer(session: State<'_, Arc<SessionState>>, peer_id: String) {
     if let Some(peer) = session.peers.lock().unwrap().get(&peer_id) {
-        let _ = peer.outbox.send(ControlMessage::Kick { reason: "Removed by host".into() });
+        if let Some(outbox) = &peer.outbox {
+            let _ = outbox.send(ControlMessage::Kick { reason: "Removed by host".into() });
+        }
     }
 }

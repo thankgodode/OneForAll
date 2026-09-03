@@ -22,9 +22,9 @@ export default function PrintView({ devices, printJobs, onPrint, onJobAction, to
   };
 
   return (
-    <div className="fade-up" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-      <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 16 }}>
-        <div className="disp" style={{ fontSize: 15, fontWeight: 600 }}>New print job</div>
+    <div className="fade-up" style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+      <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div className="disp" style={{ fontSize: 13, fontWeight: 600 }}>New print job</div>
 
         <div>
           <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-tertiary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".03em" }}>Document</div>
@@ -66,7 +66,7 @@ export default function PrintView({ devices, printJobs, onPrint, onJobAction, to
       </div>
 
       <div className="card" style={{ flex: 1, minWidth: 320 }}>
-        <div className="disp" style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Print jobs</div>
+        <div className="disp" style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Print jobs</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {printJobs.map((p) => {
             const m = JOB_STATUS_META[p.status];
