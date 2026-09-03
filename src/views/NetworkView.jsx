@@ -15,22 +15,53 @@ export default function NetworkView({ network, setNetwork, devices, toast, confi
   const copyCode = () => toast("Session code copied to clipboard");
   const participants = devices.filter((d) => !d.isSelf && d.status !== "offline");
 
-  useEffect(() =>{
-    async function fetch_services(){
-      await listen("mdns-service-resolved",(event) =>{
-        setServices(...services,event.payload)
-      })
-  
-      await listen("mdns-service-removed",(event) =>{
-        let names = services;
-  
-        let new_services = names.filter((el, i) => el!==event.payload);
-        setServices(new_services)
-      })
-    }
+  useEffect(() => {
+    let unlistenResolved;
+    let unlistenRemoved;
 
-    fetch_services()
-  },[browsing])
+    const setupListeners = async () => {
+      unlistenResolved = await listen(
+        "mdns-service-resolved",
+        (event) => {
+          setServices((current) => {
+            const updated = new Map(current);
+
+            updated.set(event.payload[0], {
+              name: event.payload[0],
+              address: event.payload[1],
+            });
+
+            return updated;
+        });
+        }
+      );
+
+      unlistenRemoved = await listen(
+        "mdns-service-removed",
+        (event) => {
+          setServices((current) => {
+            const updated = new Map(current);
+
+            updated.delete(event.payload);
+
+            return updated;
+          });
+        }
+      );
+      
+      console.log("SERVICES: ", services);
+    };
+
+    setupListeners();
+
+
+    return () => {
+      unlistenResolved?.();
+      unlistenRemoved?.();
+    };
+
+
+  }, [browsing]);
 
   return (
     <div className="fade-up" style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
@@ -101,27 +132,31 @@ export default function NetworkView({ network, setNetwork, devices, toast, confi
           </button>
           }
           {
-            browsing && services.length < 1 && 
+            browsing && services.size < 1 && 
               <div className="empty-state" style={{ padding: 20, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
                 <Radio size={18} />
                 <div style={{ fontSize: 12.5 }}>Searching for hosts on your LAN…</div>
               </div>
           }
-          {
-            services.length > 0 && 
-            (
-              <div style={{}}>
-                {services.map((el,i) =>{
-                  <List>{el}</List>
-                })}    
-              </div>
-            )
-          }
+          {services.size > 0 && (
+            <div>
+              {[...services.values()].map((service) => {
+                return(
+                  <div key={service.name} style={{ display: "flex", flexDirection: "column", gap: 2, padding: 8, background: "var(--bg-elevated)", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", marginBottom: 6, cursor:"pointer"}}>
+                    <label>
+                      {service.name}
+                    </label>
+                  </div>
+                )
+              })}
+            </div>
+          )}
           {browsing &&(
             <button
               className="btn btn-danger"
               onClick={async()=>{
                 await invoke("stop_browsing")
+                setServices(new Map())
                 setBrowsing(false)
               }}
             >
