@@ -18,9 +18,12 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         Err(_) => return,
     };
 
+    
     let ControlMessage::JoinRequest { display_name, device_name, code, listen_port } = msg else {
         return; // first message on a Control connection must be a join request
     };
+    
+    println!("My address: {:?}", addr);
 
     let request_id = uuid::Uuid::new_v4().to_string();
     // Use the peer's OWN reported listening port, not the source port of

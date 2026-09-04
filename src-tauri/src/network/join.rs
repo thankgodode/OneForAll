@@ -24,11 +24,13 @@ pub async fn join_network(
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ConnectionKind::Control).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ControlMessage::JoinRequest {
-        display_name,
+        display_name:display_name.clone(),
         device_name: device.name.clone(),
         code: None,
         listen_port: my_listen_port,
     }).await.map_err(|e| e.to_string())?;
+
+    println!("Host address: {}, Display Name {}, Listen Port {}", host_addr,display_name,my_listen_port);
 
     loop {
         match recv_msg::<ControlMessage, _>(&mut socket).await {
