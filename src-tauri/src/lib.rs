@@ -9,6 +9,8 @@ mod util;
 use state::{AppSettings, DeviceInfo, MdnsState, PendingIncoming, SessionState, TcpState};
 use std::sync::Arc;
 
+use crate::state::ClientState;
+
 fn default_download_dir() -> std::path::PathBuf {
     dirs::download_dir().unwrap_or_else(|| std::path::PathBuf::from("."))
 }
@@ -17,6 +19,7 @@ fn default_download_dir() -> std::path::PathBuf {
 pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(DeviceInfo::new()))
+        .manage(Arc::new(ClientState::new()))
         .manage(Arc::new(MdnsState::new()))
         .manage(Arc::new(SessionState::new("My Network")))
         .manage(Arc::new(TcpState::new()))
