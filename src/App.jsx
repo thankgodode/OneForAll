@@ -122,7 +122,13 @@ export default function App() {
         },
 
         onJoinRequested: (peer) => {
-          setPendingJoins((prev) => [...prev, peer]);
+          setPendingJoins((prev) => {
+            if (prev.some((p) => p.id === peer.id)) {
+              return prev;
+            }
+
+            return [...prev, peer];
+          });
         },
         onJoinPending: () => {
           setNetwork((n) => ({ ...n, joinStatus: "pending" }));
