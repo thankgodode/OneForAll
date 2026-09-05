@@ -127,7 +127,14 @@ export default function NetworkView({
         <div className="card" style={{ flex: 1, minWidth: 320 }}>
           <div className="panel-head"><div className="disp" style={{ fontSize: 13, fontWeight: 600 }}>Connected participants</div><span className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{participants.length}</span></div>
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {participants.map((d) => <DeviceRow key={d.id} device={d} size={28} />)}
+            {participants.map((d) => (
+              <DeviceRow
+                key={d.id}
+                device={d}
+                size={28}
+                trailing={d.isHost ? <span className="chip" style={{ background: "var(--teal-glow)", color: "var(--teal)" }}>Host</span> : undefined}
+              />
+            ))}
             {participants.length === 0 && <div className="empty-state" style={{ padding: 20 }}>Just you and the host so far</div>}
           </div>
         </div>

@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::network::dispatch::handle_connection;
-use crate::state::{AppSettings, PendingIncoming, SessionState, TcpState};
+use crate::state::{AppSettings, DeviceInfo, PendingIncoming, SessionState, TcpState};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::net::TcpListener;
@@ -53,12 +53,14 @@ pub async fn start_listening(
     session_state: State<'_, Arc<SessionState>>,
     settings_state: State<'_, Arc<AppSettings>>,
     pending_state: State<'_, Arc<PendingIncoming>>,
+    device_state: State<'_, Arc<DeviceInfo>>,
 ) -> Result<u16, String> {
     let ctx = AppContext {
         session: session_state.inner().clone(),
         tcp: tcp_state.inner().clone(),
         settings: settings_state.inner().clone(),
         pending_incoming: pending_state.inner().clone(),
+        device: device_state.inner().clone(),
     };
     bind_and_serve(ctx, app).await
 }

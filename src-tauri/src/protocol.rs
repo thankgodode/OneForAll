@@ -43,7 +43,7 @@ pub const HOST_PEER_ID: &str = "host";
 pub enum ControlMessage {
     JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16 },
     JoinPending,
-    JoinAccepted { session_name: String, peer_id: String, roster: Vec<PeerInfo> },
+    JoinAccepted { session_name: String, peer_id: String, host_device_name: String, roster: Vec<PeerInfo> },
     JoinRejected { reason: String },
     PeerJoined(PeerInfo),
     PeerLeft { peer_id: String },

@@ -21,7 +21,7 @@ export default function SendFilesView({ devices, onSend, toast }) {
   const [files, setFiles] = useState([]); // [{ path, name, size }]
   const [selected, setSelected] = useState([]);
   const [dragActive, setDragActive] = useState(false);
-  const recipients = devices.filter((d) => !d.isSelf);
+  const recipients = devices.filter((d) => !d.isSelf && d.status !== "offline");
 
   const pickFiles = async () => {
     const picked = await open({ multiple: true });

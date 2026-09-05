@@ -16,7 +16,7 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
 
     match kind {
         ConnectionKind::Control => {
-            handle_control_connection(socket, addr, ctx.session, app).await;
+            handle_control_connection(socket, addr, ctx.session, ctx.device, app).await;
         }
         ConnectionKind::Transfer { peer_id, transfer_id, filename, size } => {
             // The membership check happens here, before a single byte of

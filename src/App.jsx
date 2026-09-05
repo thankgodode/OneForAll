@@ -99,8 +99,7 @@ export default function App() {
       try {
         const port = await api.startListening();
         setMyListenPort(port);
-      } catch(e){
-        console.log("ERROR: ", e)
+      } catch {
         toast("Couldn't start listening for connections", true);
       }
 
@@ -128,9 +127,14 @@ export default function App() {
         onJoinPending: () => {
           setNetwork((n) => ({ ...n, joinStatus: "pending" }));
         },
-        onJoinedNetwork: (sessionName, initialRoster) => {
+        onJoinedNetwork: (sessionName, hostInfo, initialRoster) => {
           setNetwork((n) => ({ ...n, role: "joined", connected: true, sessionName, joinStatus: "idle" }));
-          setRoster(initialRoster);
+          // The host is never part of `roster` itself (see control.rs —
+          // it never inserts itself as a member of its own session), so
+          // it's merged in here — otherwise a joined client's device
+          // list would show every peer except the one it's actually
+          // connected to.
+          setRoster([{ ...hostInfo, isHost: true }, ...initialRoster]);
         },
         onPeerJoined: (peer) => {
           setRoster((prev) => (prev.some((p) => p.id === peer.id) ? prev : [...prev, peer]));
