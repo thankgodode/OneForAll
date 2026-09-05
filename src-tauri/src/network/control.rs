@@ -1,5 +1,5 @@
 use crate::protocol::{recv_msg, send_msg, ControlMessage, PeerInfo};
-use crate::state::{PendingJoin, SessionState};
+use crate::state::{DeviceInfo, PendingJoin, SessionState};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -11,19 +11,18 @@ use tokio::sync::{mpsc, oneshot};
 /// otherwise queues it for the frontend to approve — then relays roster
 /// events for as long as the peer stays connected. Returning means the
 /// peer is gone, whether that's a clean `Leave` or the socket just
-/// dying.
-pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, session: Arc<SessionState>, app: AppHandle) {
+/// dying. `device` is THIS device's own identity — it's what lets
+/// `JoinAccepted` actually tell the new peer who they connected to,
+/// rather than leaving them with nothing but the session name.
+pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, session: Arc<SessionState>, device: Arc<DeviceInfo>, app: AppHandle) {
     let msg: ControlMessage = match recv_msg(&mut socket).await {
         Ok(m) => m,
         Err(_) => return,
     };
 
-    
     let ControlMessage::JoinRequest { display_name, device_name, code, listen_port } = msg else {
         return; // first message on a Control connection must be a join request
     };
-    
-    println!("My address: {:?}", addr);
 
     let request_id = uuid::Uuid::new_v4().to_string();
     // Use the peer's OWN reported listening port, not the source port of
@@ -53,10 +52,21 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         return;
     }
 
+    // Snapshot the roster and notify EXISTING peers before inserting the
+    // newcomer — both of these have to happen while the newcomer is still
+    // absent from `session.peers`, or two things go wrong: the roster
+    // handed back in JoinAccepted below would include the newcomer's own
+    // entry (since `session.roster()` reads the live map), and
+    // `broadcast` would reach the newcomer's own outbox — which only
+    // gets created a few lines below — echoing PeerJoined(info) back
+    // down their own connection describing themselves.
+    let roster = session.roster();
+    session.broadcast(ControlMessage::PeerJoined(info.clone()));
+
     let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel();
     session.insert_peer(info.clone(), Some(outbox_tx));
 
-    // Extracted into locals BEFORE the `.await` below on purpose: a
+    // Extracted into a local BEFORE the `.await` below on purpose: a
     // `MutexGuard` built inline inside an awaited call's arguments lives
     // until the end of the whole statement (not just the `.clone()`),
     // which spans the `.await` point and makes the guard part of the
@@ -66,14 +76,13 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // a local first ends the guard's scope at the `let`, well before the
     // `.await` is ever reached.
     let session_name = session.session_name.lock().unwrap().clone();
-    let roster = session.roster();
     let _ = send_msg(&mut socket, &ControlMessage::JoinAccepted {
         session_name,
         peer_id: info.id.clone(),
+        host_device_name: device.name.clone(),
         roster,
     }).await;
 
-    session.broadcast(ControlMessage::PeerJoined(info.clone()));
     let _ = app.emit("peer-joined", &info);
 
     let (mut read_half, mut write_half) = socket.into_split();

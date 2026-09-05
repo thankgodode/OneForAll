@@ -24,21 +24,32 @@ pub async fn join_network(
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ConnectionKind::Control).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ControlMessage::JoinRequest {
-        display_name:display_name.clone(),
+        display_name,
         device_name: device.name.clone(),
         code: None,
         listen_port: my_listen_port,
     }).await.map_err(|e| e.to_string())?;
-
-    println!("Host address: {}, Display Name {}, Listen Port {}", host_addr,display_name,my_listen_port);
 
     loop {
         match recv_msg::<ControlMessage, _>(&mut socket).await {
             Ok(ControlMessage::JoinPending) => {
                 let _ = app.emit("join-pending", ());
             }
-            Ok(ControlMessage::JoinAccepted { session_name, peer_id, roster }) => {
-                let _ = app.emit("joined-network", (&session_name, &roster));
+            Ok(ControlMessage::JoinAccepted { session_name, peer_id, host_device_name, roster }) => {
+                let host_info = PeerInfo {
+                    id: HOST_PEER_ID.into(),
+                    display_name: "Host".into(),
+                    device_name: host_device_name,
+                    addr: host_addr.clone(),
+                };
+                // The frontend gets the host's real info here — this is
+                // the only point in the whole flow where it does. Without
+                // it, a joined client's device list would show every
+                // other peer but never the host it's actually connected
+                // to, since `roster` itself never includes the host (see
+                // control.rs — the host never inserts itself as a member
+                // of its own session).
+                let _ = app.emit("joined-network", (&session_name, &host_info, &roster));
                 let me = PeerInfo {
                     id: peer_id.clone(),
                     display_name: "You".into(),
@@ -48,16 +59,10 @@ pub async fn join_network(
 
                 // Mirror the roster into this device's own SessionState so
                 // `dispatch::handle_connection`'s membership check works
-                // the same way here as it does on the host — including a
-                // stand-in entry for the host itself under HOST_PEER_ID,
-                // since the host never goes through JoinRequest to get a
-                // "real" id.
-                session.insert_peer_mirror(PeerInfo {
-                    id: HOST_PEER_ID.into(),
-                    display_name: "Host".into(),
-                    device_name: session_name.clone(),
-                    addr: host_addr.clone(),
-                });
+                // the same way here as it does on the host — including
+                // the host itself under HOST_PEER_ID, since the host
+                // never goes through JoinRequest to get a "real" id.
+                session.insert_peer_mirror(host_info);
                 for peer in &roster {
                     session.insert_peer_mirror(peer.clone());
                 }

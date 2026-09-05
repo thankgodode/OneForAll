@@ -3,7 +3,7 @@
 //! control, receive) accumulates its own parameter for each new piece of
 //! shared state a feature needs — this keeps that list to one.
 
-use crate::state::{AppSettings, PendingIncoming, SessionState, TcpState};
+use crate::state::{AppSettings, DeviceInfo, PendingIncoming, SessionState, TcpState};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -12,4 +12,5 @@ pub struct AppContext {
     pub tcp: Arc<TcpState>,
     pub settings: Arc<AppSettings>,
     pub pending_incoming: Arc<PendingIncoming>,
+    pub device: Arc<DeviceInfo>,
 }

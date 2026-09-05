@@ -23,6 +23,7 @@ export function toUiDevice(peer, { status = "online", isSelf = false } = {}) {
     device: peer.device_name,
     status,
     isSelf,
+    isHost: !!peer.isHost,
     hasPrinter: false, // printing isn't implemented on the backend yet — see PrintView
     color: peerColor(peer.id),
   };

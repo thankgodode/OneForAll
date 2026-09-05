@@ -9,7 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 //   mdns-service-removed      fullname: string
 //   join-requested            PeerInfo                  — host: someone wants in
 //   join-pending              ()                         — client: waiting on host
-//   joined-network            (sessionName: string, roster: PeerInfo[])
+//   joined-network            (sessionName: string, hostInfo: PeerInfo, roster: PeerInfo[])
 //   peer-joined                PeerInfo
 //   peer-left                   peerId: string
 //   kicked                       reason: string
@@ -32,7 +32,7 @@ export async function subscribeToBackendEvents(handlers) {
     ["mdns-service-removed", (fullname) => handlers.onServiceRemoved?.(fullname)],
     ["join-requested", (peer) => handlers.onJoinRequested?.(peer)],
     ["join-pending", () => handlers.onJoinPending?.()],
-    ["joined-network", ([sessionName, roster]) => handlers.onJoinedNetwork?.(sessionName, roster)],
+    ["joined-network", ([sessionName, hostInfo, roster]) => handlers.onJoinedNetwork?.(sessionName, hostInfo, roster)],
     ["peer-joined", (peer) => handlers.onPeerJoined?.(peer)],
     ["peer-left", (peerId) => handlers.onPeerLeft?.(peerId)],
     ["kicked", (reason) => handlers.onKicked?.(reason)],
