@@ -82,6 +82,7 @@ async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, file_path: Arc<
     let sent_header = send_msg(&mut socket, &ConnectionKind::Transfer {
         peer_id: my_peer_id, transfer_id: transfer_id.clone(), filename, size,
     }).await;
+    
     if sent_header.is_err() {
         let _ = app.emit("transfer-failed", (&transfer_id, "Failed to start transfer"));
         return;
