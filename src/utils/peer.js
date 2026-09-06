@@ -19,8 +19,8 @@ export function peerColor(id) {
 export function toUiDevice(peer, { status = "online", isSelf = false } = {}) {
   return {
     id: peer.id,
-    name: peer.display_name,
-    device: peer.device_name,
+    name: peer.displayName,
+    device: peer.deviceName,
     status,
     isSelf,
     isHost: !!peer.isHost,
