@@ -12,7 +12,19 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+// `rename_all = "camelCase"` on every struct that crosses the JS boundary
+// (this one, and everything in events.rs) is deliberate and load-bearing:
+// Tauri auto-converts camelCase<->snake_case for #[tauri::command]
+// ARGUMENTS, but NOT for emitted event payloads or command return values
+// — those are just serde_json'd as-is, using whatever the Rust struct's
+// field names literally are. Without this attribute, PeerInfo would
+// serialize as `display_name`/`device_name`, and every frontend spot
+// that expects `.displayName`/`.deviceName` would silently get
+// `undefined` instead of an error. One convention, enforced here, is
+// what makes the frontend able to assume camelCase everywhere without
+// checking case-by-case.
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct PeerInfo {
     pub id: String,
     pub display_name: String,

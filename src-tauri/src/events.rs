@@ -5,7 +5,13 @@
 use crate::protocol::PeerInfo;
 use serde::Serialize;
 
+// Same reasoning as PeerInfo in protocol.rs: these get serde_json'd
+// straight into event payloads with no camelCase conversion unless told
+// to, so every struct here needs the attribute or its fields arrive in
+// JS as snake_case regardless of what the JS code assumes.
+
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct TransferProgress {
     pub transfer_id: String,
     pub bytes_done: u64,
@@ -14,6 +20,7 @@ pub struct TransferProgress {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct IncomingFileRequest {
     pub transfer_id: String,
     pub filename: String,
@@ -30,6 +37,7 @@ pub struct IncomingFileRequest {
 /// this event there'd be no way to know which transfer_id belongs to
 /// which (file, peer) pair well enough to render a progress row for it.
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct TransferStarted {
     pub transfer_id: String,
     pub peer_id: String,

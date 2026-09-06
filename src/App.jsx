@@ -85,11 +85,25 @@ export default function App() {
 
   /* ---------------- startup: identity, listening, discovery ---------------- */
   useEffect(() => {
-    let unsubscribe;
+    // The `cancelled` flag guards against React's dev-mode double-invoke
+    // of effects (mount → cleanup → mount again, to surface exactly this
+    // class of bug). Without it: cleanup can run before this async body
+    // has assigned `unsubscribe` at all (the assignment happens after an
+    // `await`), so the early cleanup call is a no-op on a variable that's
+    // still `undefined` — the first run's listeners never get torn down,
+    // and the second run adds a full second set on top. Every event
+    // handler then fires twice per real event, which is what duplicate
+    // rows in the UI (e.g. the same join request appearing twice) look
+    // like from the outside. Checking `cancelled` after each await lets
+    // a stale run unsubscribe itself the moment it notices it's stale,
+    // instead of leaving a second live subscription behind.
+    let cancelled = false;
+    let unsubscribe = null;
 
     (async () => {
       try {
         const name = await api.getDeviceName();
+        if (cancelled) return;
         setDeviceName(name);
         setProfile((p) => ({ ...p, displayName: name }));
       } catch {
@@ -98,18 +112,21 @@ export default function App() {
 
       try {
         const port = await api.startListening();
+        if (cancelled) return;
         setMyListenPort(port);
       } catch {
-        toast("Couldn't start listening for connections", true);
+        if (!cancelled) toast("Couldn't start listening for connections", true);
       }
 
       try {
         await api.browseService();
       } catch {
-        toast("Couldn't start network discovery", true);
+        if (!cancelled) toast("Couldn't start network discovery", true);
       }
 
-      unsubscribe = await subscribeToBackendEvents({
+      if (cancelled) return;
+
+      const unsub = await subscribeToBackendEvents({
         onServiceResolved: (fullname, addr) => {
           if (!addr) return;
           setDiscoveredHosts((prev) => {
@@ -122,13 +139,7 @@ export default function App() {
         },
 
         onJoinRequested: (peer) => {
-          setPendingJoins((prev) => {
-            if (prev.some((p) => p.id === peer.id)) {
-              return prev;
-            }
-
-            return [...prev, peer];
-          });
+          setPendingJoins((prev) => (prev.some((p) => p.id === peer.id) ? prev : [...prev, peer]));
         },
         onJoinPending: () => {
           setNetwork((n) => ({ ...n, joinStatus: "pending" }));
@@ -159,25 +170,27 @@ export default function App() {
         },
 
         onIncomingFileRequest: (req) => {
-          setPendingIncomingFiles((prev) => [...prev, req]);
+          setPendingIncomingFiles((prev) => (prev.some((r) => r.transferId === req.transferId) ? prev : [...prev, req]));
         },
         onTransferStarted: (t) => {
-          setTransfers((prev) => [
-            {
-              id: t.transferId,
-              file: t.filename,
-              sizeBytes: t.size,
-              size: fmtBytes(t.size),
-              target: t.peerName,
-              peerId: t.peerId,
-              direction: t.direction,
-              status: "active",
-              progress: 0,
-              speed: "—",
-              eta: "—",
-            },
-            ...prev,
-          ]);
+          setTransfers((prev) => (
+            prev.some((x) => x.id === t.transferId) ? prev : [
+              {
+                id: t.transferId,
+                file: t.filename,
+                sizeBytes: t.size,
+                size: fmtBytes(t.size),
+                target: t.peerName,
+                peerId: t.peerId,
+                direction: t.direction,
+                status: "active",
+                progress: 0,
+                speed: "—",
+                eta: "—",
+              },
+              ...prev,
+            ]
+          ));
         },
         onTransferProgress: (p) => {
           const pct = p.totalBytes > 0 ? Math.round((p.bytesDone / p.totalBytes) * 100) : 0;
@@ -200,9 +213,21 @@ export default function App() {
           updateTransfer(transferId, { status: "failed", error: "Rejected by recipient" });
         },
       });
+
+      // If cleanup already ran by the time this resolved (the exact
+      // double-invoke race described above), tear this stale set of
+      // listeners down immediately instead of leaving it live.
+      if (cancelled) {
+        unsub();
+      } else {
+        unsubscribe = unsub;
+      }
     })();
 
-    return () => unsubscribe?.();
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -216,7 +241,7 @@ export default function App() {
     };
     setModal({
       title: `Incoming file: ${req.filename}`,
-      body: `${req.from?.display_name || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
+      body: `${req.from?.displayName || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
       confirmLabel: "Accept",
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
