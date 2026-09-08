@@ -13,7 +13,7 @@ edition = "2021"
 # listed here, or invoke() calls to them fail at runtime.
 
 [dependencies]
-tauri = { version = "2" }
+tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tokio = { version = "1", features = ["full"] }
