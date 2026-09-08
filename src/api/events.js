@@ -16,6 +16,7 @@ import { listen } from "@tauri-apps/api/event";
 //   disconnected-from-network     ()
 //   incoming-file-request           IncomingFileRequest
 //   transfer-started                  { transferId, peerId, peerName, filename, size, direction }
+//   transfer-resumed                   (transferId: string, resumedFromBytes: number)
 //   transfer-progress                 TransferProgress
 //   transfer-completed                 (transferId: string, destPath: string)
 //   transfer-failed                     (transferId: string, reason: string)
@@ -39,6 +40,7 @@ export async function subscribeToBackendEvents(handlers) {
     ["disconnected-from-network", () => handlers.onDisconnected?.()],
     ["incoming-file-request", (req) => handlers.onIncomingFileRequest?.(req)],
     ["transfer-started", (t) => handlers.onTransferStarted?.(t)],
+    ["transfer-resumed", ([transferId, resumedFromBytes]) => handlers.onTransferResumed?.(transferId, resumedFromBytes)],
     ["transfer-progress", (progress) => handlers.onTransferProgress?.(progress)],
     ["transfer-completed", ([transferId, destPath]) => handlers.onTransferCompleted?.(transferId, destPath)],
     ["transfer-failed", ([transferId, reason]) => handlers.onTransferFailed?.(transferId, reason)],

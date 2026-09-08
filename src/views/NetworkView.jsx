@@ -79,8 +79,8 @@ export default function NetworkView({
                 {pendingJoins.map((peer) => (
                   <div key={peer.id} className="device-row">
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{peer.display_name}</div>
-                      <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{peer.device_name}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{peer.displayName}</div>
+                      <div className="mono" style={{ fontSize: 10.5, color: "var(--text-tertiary)" }}>{peer.deviceName}</div>
                     </div>
                     <div style={{ display: "flex", gap: 5 }}>
                       <button className="btn-icon" onClick={() => onRespondToJoin(peer.id, true)}><Check size={13} /></button>

@@ -23,7 +23,7 @@ function SettingsRow({ label, desc, on, onClick }) {
 // and download location, both wired to actual backend commands via
 // `onSetConfirmFiles`/`onSetDownloadDir`. Printing prefs stay mock,
 // matching PrintView, since there's no backend support for printing yet.
-export default function SettingsView({ profile, setProfile, onSetConfirmFiles, onSetDownloadDir, deviceName, myListenPort, toast }) {
+export default function SettingsView({ profile, setProfile, onSetDisplayName, onSetAvatarColor, onSetConfirmFiles, onSetDownloadDir, deviceName, myListenPort, toast }) {
   const patchGroup = (group, key) => setProfile((p) => ({ ...p, [group]: { ...p[group], [key]: !p[group][key] } }));
 
   const pickDownloadDir = async () => {
@@ -49,7 +49,7 @@ export default function SettingsView({ profile, setProfile, onSetConfirmFiles, o
             {AVATAR_COLORS.map((c) => (
               <button
                 key={c}
-                onClick={() => setProfile((p) => ({ ...p, avatarColor: c }))}
+                onClick={() => onSetAvatarColor(c)}
                 style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: profile.avatarColor === c ? "2px solid var(--text-primary)" : "2px solid transparent" }}
               />
             ))}
@@ -76,7 +76,13 @@ export default function SettingsView({ profile, setProfile, onSetConfirmFiles, o
           </div>
         </div>
 
-        <button className="btn btn-primary" style={{ alignSelf: "flex-start" }} onClick={() => toast("Profile saved")}>Save changes</button>
+        <button
+          className="btn btn-primary"
+          style={{ alignSelf: "flex-start" }}
+          onClick={() => { onSetDisplayName(profile.displayName); toast("Profile saved"); }}
+        >
+          Save changes
+        </button>
       </div>
 
       <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 4 }}>

@@ -32,11 +32,11 @@ export default function TransferRow({ t, onAction }) {
         )}
       </div>
       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-        {t.status === "active" && <button className="btn-icon" onClick={() => onAction(t.id, "pause")}><Pause size={13} /></button>}
-        {t.status === "paused" && <button className="btn-icon" onClick={() => onAction(t.id, "resume")}><Play size={13} /></button>}
-        {t.status === "failed" && <button className="btn-icon" onClick={() => onAction(t.id, "retry")}><RotateCcw size={13} /></button>}
-        {t.status === "active" && <button className="btn-icon" onClick={() => onAction(t.id, "cancel")}><X size={13} /></button>}
-        {(t.status === "completed" || t.status === "failed") && <button className="btn-icon" onClick={() => onAction(t.id, "remove")}><Trash2 size={13} /></button>}
+        {t.status === "active" && <button className="btn-icon" onClick={() => onAction(t.id, "pause")} title="Pause"><Pause size={13} /></button>}
+        {t.status === "failed" && <button className="btn-icon" onClick={() => onAction(t.id, "resume")} title="Resume from where it left off"><Play size={13} /></button>}
+        {t.status === "failed" && <button className="btn-icon" onClick={() => onAction(t.id, "retry")} title="Start over"><RotateCcw size={13} /></button>}
+        {t.status === "active" && <button className="btn-icon" onClick={() => onAction(t.id, "cancel")} title="Cancel"><X size={13} /></button>}
+        {(t.status === "completed" || t.status === "failed") && <button className="btn-icon" onClick={() => onAction(t.id, "remove")} title="Remove"><Trash2 size={13} /></button>}
       </div>
     </div>
   );

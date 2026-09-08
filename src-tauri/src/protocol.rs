@@ -12,7 +12,19 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+// `rename_all = "camelCase"` on every struct that crosses the JS boundary
+// (this one, and everything in events.rs) is deliberate and load-bearing:
+// Tauri auto-converts camelCase<->snake_case for #[tauri::command]
+// ARGUMENTS, but NOT for emitted event payloads or command return values
+// — those are just serde_json'd as-is, using whatever the Rust struct's
+// field names literally are. Without this attribute, PeerInfo would
+// serialize as `display_name`/`device_name`, and every frontend spot
+// that expects `.displayName`/`.deviceName` would silently get
+// `undefined` instead of an error. One convention, enforced here, is
+// what makes the frontend able to assume camelCase everywhere without
+// checking case-by-case.
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct PeerInfo {
     pub id: String,
     pub display_name: String,
@@ -29,6 +41,27 @@ pub enum ConnectionKind {
         filename: String,
         size: u64,
     },
+    /// Reconnecting to continue a transfer that was interrupted, not
+    /// started fresh — no filename/size needed, since the receiver
+    /// already has both from the original attempt (see db::IncompleteTransfer).
+    /// The receiver responds with exactly one `ResumeOffset` (via the
+    /// same length-prefixed bincode framing as Control messages) before
+    /// either side sends a single raw file byte — that response is what
+    /// tells the sender where in its local file to seek to.
+    ResumeTransfer {
+        peer_id: String,
+        transfer_id: String,
+    },
+}
+
+/// The receiver's answer to `ConnectionKind::ResumeTransfer` — how many
+/// bytes it already has on disk. Deliberately derived from the partial
+/// file's ACTUAL size on disk (`fs::metadata`) at the moment this is
+/// sent, never from a separately-tracked progress counter that could
+/// have drifted from what was really flushed before the disconnect.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ResumeOffset {
+    pub bytes_received: u64,
 }
 
 /// A stand-in peer_id representing "the host of the session I joined."

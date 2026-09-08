@@ -85,31 +85,95 @@ export default function App() {
 
   /* ---------------- startup: identity, listening, discovery ---------------- */
   useEffect(() => {
-    let unsubscribe;
+    // The `cancelled` flag guards against React's dev-mode double-invoke
+    // of effects (mount → cleanup → mount again, to surface exactly this
+    // class of bug). Without it: cleanup can run before this async body
+    // has assigned `unsubscribe` at all (the assignment happens after an
+    // `await`), so the early cleanup call is a no-op on a variable that's
+    // still `undefined` — the first run's listeners never get torn down,
+    // and the second run adds a full second set on top. Every event
+    // handler then fires twice per real event, which is what duplicate
+    // rows in the UI (e.g. the same join request appearing twice) look
+    // like from the outside. Checking `cancelled` after each await lets
+    // a stale run unsubscribe itself the moment it notices it's stale,
+    // instead of leaving a second live subscription behind.
+    let cancelled = false;
+    let unsubscribe = null;
 
     (async () => {
       try {
         const name = await api.getDeviceName();
+        if (cancelled) return;
         setDeviceName(name);
-        setProfile((p) => ({ ...p, displayName: name }));
       } catch {
         // keep the "This device" default — not fatal
       }
 
+      // Restores whatever was saved last session — display name, avatar
+      // color, download dir, confirm-files preference all persist now
+      // (see nearby-backend/src/db.rs), instead of resetting every launch.
+      try {
+        const settings = await api.getSettings();
+        if (cancelled) return;
+        setProfile((p) => ({
+          ...p,
+          displayName: settings.displayName,
+          avatarColor: settings.avatarColor,
+          downloadPath: settings.downloadDir,
+          confirmations: { ...p.confirmations, files: settings.confirmIncomingFiles },
+        }));
+      } catch {
+        // fresh install / DB read failed — the defaults already in state are fine
+      }
+
       try {
         const port = await api.startListening();
+        if (cancelled) return;
         setMyListenPort(port);
       } catch {
-        toast("Couldn't start listening for connections", true);
+        if (!cancelled) toast("Couldn't start listening for connections", true);
       }
 
       try {
         await api.browseService();
       } catch {
-        toast("Couldn't start network discovery", true);
+        if (!cancelled) toast("Couldn't start network discovery", true);
       }
 
-      unsubscribe = await subscribeToBackendEvents({
+      // Interrupted transfers from a PREVIOUS session (not just ones that
+      // failed during this one) — the ledger backing this is on disk, so
+      // it survives a full app restart, not just a still-running reconnect.
+      try {
+        const incomplete = await api.listIncompleteTransfers();
+        if (!cancelled && incomplete.length) {
+          setTransfers((prev) => {
+            const existingIds = new Set(prev.map((t) => t.id));
+            const restored = incomplete
+              .filter((t) => !existingIds.has(t.transferId))
+              .map((t) => ({
+                id: t.transferId,
+                file: t.filename,
+                sizeBytes: t.totalSize,
+                size: fmtBytes(t.totalSize),
+                target: t.peerDisplayName,
+                peerId: null, // re-resolved by device name when actually resumed — see resume_transfer
+                direction: t.direction,
+                status: "failed",
+                progress: 0,
+                speed: "—",
+                eta: "—",
+                error: "Interrupted before this session — resume once reconnected",
+              }));
+            return [...restored, ...prev];
+          });
+        }
+      } catch {
+        // not fatal — just means no restored rows this launch
+      }
+
+      if (cancelled) return;
+
+      const unsub = await subscribeToBackendEvents({
         onServiceResolved: (fullname, addr) => {
           if (!addr) return;
           setDiscoveredHosts((prev) => {
@@ -122,13 +186,7 @@ export default function App() {
         },
 
         onJoinRequested: (peer) => {
-          setPendingJoins((prev) => {
-            if (prev.some((p) => p.id === peer.id)) {
-              return prev;
-            }
-
-            return [...prev, peer];
-          });
+          setPendingJoins((prev) => (prev.some((p) => p.id === peer.id) ? prev : [...prev, peer]));
         },
         onJoinPending: () => {
           setNetwork((n) => ({ ...n, joinStatus: "pending" }));
@@ -159,25 +217,44 @@ export default function App() {
         },
 
         onIncomingFileRequest: (req) => {
-          setPendingIncomingFiles((prev) => [...prev, req]);
+          setPendingIncomingFiles((prev) => (prev.some((r) => r.transferId === req.transferId) ? prev : [...prev, req]));
         },
         onTransferStarted: (t) => {
-          setTransfers((prev) => [
-            {
-              id: t.transferId,
-              file: t.filename,
-              sizeBytes: t.size,
-              size: fmtBytes(t.size),
-              target: t.peerName,
-              peerId: t.peerId,
-              direction: t.direction,
-              status: "active",
-              progress: 0,
-              speed: "—",
-              eta: "—",
-            },
-            ...prev,
-          ]);
+          setTransfers((prev) => (
+            prev.some((x) => x.id === t.transferId) ? prev : [
+              {
+                id: t.transferId,
+                file: t.filename,
+                sizeBytes: t.size,
+                size: fmtBytes(t.size),
+                target: t.peerName,
+                peerId: t.peerId,
+                direction: t.direction,
+                status: "active",
+                progress: 0,
+                speed: "—",
+                eta: "—",
+              },
+              ...prev,
+            ]
+          ));
+        },
+        // Fires on both a successful reconnect-and-continue AND (should
+        // it ever arrive for a row that isn't already in state) a
+        // defensive no-op — but in practice the row always exists first,
+        // either from onTransferStarted this session or from the
+        // listIncompleteTransfers() restore at startup.
+        onTransferResumed: (transferId, resumedFromBytes) => {
+          setTransfers((prev) => prev.map((t) => (
+            t.id === transferId
+              ? {
+                  ...t,
+                  status: "active",
+                  error: undefined,
+                  progress: t.sizeBytes > 0 ? Math.round((resumedFromBytes / t.sizeBytes) * 100) : 0,
+                }
+              : t
+          )));
         },
         onTransferProgress: (p) => {
           const pct = p.totalBytes > 0 ? Math.round((p.bytesDone / p.totalBytes) * 100) : 0;
@@ -200,9 +277,21 @@ export default function App() {
           updateTransfer(transferId, { status: "failed", error: "Rejected by recipient" });
         },
       });
+
+      // If cleanup already ran by the time this resolved (the exact
+      // double-invoke race described above), tear this stale set of
+      // listeners down immediately instead of leaving it live.
+      if (cancelled) {
+        unsub();
+      } else {
+        unsubscribe = unsub;
+      }
     })();
 
-    return () => unsubscribe?.();
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -216,7 +305,7 @@ export default function App() {
     };
     setModal({
       title: `Incoming file: ${req.filename}`,
-      body: `${req.from?.display_name || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
+      body: `${req.from?.displayName || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
       confirmLabel: "Accept",
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
@@ -249,8 +338,19 @@ export default function App() {
       setTransfers((prev) => prev.filter((t) => t.id !== id));
       return;
     }
-    if (action === "pause" || action === "resume") {
+    if (action === "pause") {
       toast("Pausing isn't supported yet — cancel and resend instead");
+      return;
+    }
+    if (action === "resume") {
+      if (!network.myPeerId) {
+        toast("Join or host a network before resuming a transfer", true);
+        return;
+      }
+      // No need to check WHICH kind of failure this was — resume_transfer
+      // just errors cleanly ("No record of this transfer") if there's
+      // nothing to continue, e.g. a send that never actually connected.
+      api.resumeTransfer(network.myPeerId, id).catch((e) => toast(`Couldn't resume: ${e}`, true));
       return;
     }
     if (action === "retry") {
@@ -344,6 +444,16 @@ export default function App() {
 
   /* ---------------- settings ---------------- */
 
+  const handleSetDisplayName = (name) => {
+    setProfile((p) => ({ ...p, displayName: name }));
+    api.setDisplayName(name).catch(() => toast("Failed to save display name", true));
+  };
+
+  const handleSetAvatarColor = (color) => {
+    setProfile((p) => ({ ...p, avatarColor: color }));
+    api.setAvatarColor(color).catch(() => toast("Failed to save avatar color", true));
+  };
+
   const handleSetConfirmFiles = (value) => {
     setProfile((p) => ({ ...p, confirmations: { ...p.confirmations, files: value } }));
     api.setConfirmIncomingFiles(value).catch(() => toast("Failed to save setting", true));
@@ -414,6 +524,8 @@ export default function App() {
               <SettingsView
                 profile={profile}
                 setProfile={setProfile}
+                onSetDisplayName={handleSetDisplayName}
+                onSetAvatarColor={handleSetAvatarColor}
                 onSetConfirmFiles={handleSetConfirmFiles}
                 onSetDownloadDir={handleSetDownloadDir}
                 deviceName={deviceName}

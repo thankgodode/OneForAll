@@ -8,8 +8,15 @@ import { invoke } from "@tauri-apps/api/core";
 
 // --- device / settings ---
 export const getDeviceName = () => invoke("get_device_name");
+// getSettings() restores whatever was saved last session — call this
+// once at startup instead of trusting default/local React state, since
+// display name, avatar color, download dir, and the confirm-files
+// preference are now all persisted on the Rust side (see nearby-backend/src/db.rs).
+export const getSettings = () => invoke("get_settings");
+export const setDisplayName = (name) => invoke("set_display_name", { name });
 export const setConfirmIncomingFiles = (value) => invoke("set_confirm_incoming_files", { value });
 export const setDownloadDir = (path) => invoke("set_download_dir", { path });
+export const setAvatarColor = (color) => invoke("set_avatar_color", { color });
 
 // --- session access control (host side) ---
 export const setJoinCode = (code) => invoke("set_join_code", { code });
@@ -44,3 +51,13 @@ export const sendFileToPeers = (myPeerId, filePath, targetPeerIds) =>
 export const respondToIncomingFile = (transferId, accept) =>
   invoke("respond_to_incoming_file", { transferId, accept });
 export const cancelTransfer = (transferId) => invoke("cancel_transfer", { transferId });
+
+// --- resumable transfers ---
+// listIncompleteTransfers() covers BOTH still-running-app reconnects AND
+// a full app restart — the ledger backing it is on disk (nearby-backend/src/db.rs),
+// not in memory, so it survives either. resumeTransfer() re-resolves the
+// peer by device name (not the old, possibly-stale peer_id) and continues
+// from wherever the receiver's partial file actually left off.
+export const listIncompleteTransfers = () => invoke("list_incomplete_transfers");
+export const resumeTransfer = (myPeerId, transferId) =>
+  invoke("resume_transfer", { myPeerId, transferId });
