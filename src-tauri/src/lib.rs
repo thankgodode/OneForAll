@@ -5,6 +5,7 @@ mod network;
 mod protocol;
 mod state;
 mod util;
+mod db;
 
 use state::{AppSettings, DeviceInfo, MdnsState, PendingIncoming, SessionState, TcpState};
 use std::sync::Arc;
@@ -28,12 +29,29 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .setup(move |app| {
+            let data_dir = app.path().app_data_dir().expect("no app data directory available");
+            std::fs::create_dir_all(&data_dir).expect("failed to create app data directory");
+            let db_path = data_dir.join("nearby.db");
+
+            let default_dir = default_download_dir();
+            let db = Db::open(&db_path, &device_info.name, &default_dir.to_string_lossy())
+                .expect("failed to open local database");
+            let settings = AppSettings::load(&db, &device_info.name, default_dir);
+
+            app.manage(Arc::new(db));
+            app.manage(Arc::new(settings));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // device
             state::device::get_device_name,
             // settings
+            state::settings::get_settings,
+            state::settings::set_display_name,
             state::settings::set_confirm_incoming_files,
             state::settings::set_download_dir,
+            state::settings::set_avatar_color,
             // session access control
             state::session::set_join_code,
             state::session::set_auto_accept,
@@ -53,11 +71,11 @@ pub fn run() {
             network::join::kick_peer,
             // transfers
             network::send::send_file_to_peers,
+            network::send::resume_transfer,
             network::receive::respond_to_incoming_file,
+            network::receive::list_incomplete_transfers,
             network::transfers::cancel_transfer,
         ])
-        // .invoke_handler(tauri::generate_handler![start_service,stop_advertising, browse_service, stop_browsing, start_hosting, stop_hosting])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!())        .expect("error while running tauri application");
 }
 
