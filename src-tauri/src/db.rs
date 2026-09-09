@@ -139,11 +139,15 @@ impl Db {
 
     pub fn list_incomplete_transfers(&self) -> rusqlite::Result<Vec<IncompleteTransfer>> {
         let conn = self.conn.lock().unwrap();
+        
         let mut stmt = conn.prepare(
             "SELECT transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at
              FROM incomplete_transfers ORDER BY created_at DESC"
         )?;
-        stmt.query_map([], Self::row_to_transfer)?.collect()
+
+        let x:Result<Vec<IncompleteTransfer>, rusqlite::Error> = stmt.query_map([], Self::row_to_transfer)?.collect(); 
+
+        x
     }
 
     fn row_to_transfer(row: &rusqlite::Row) -> rusqlite::Result<IncompleteTransfer> {

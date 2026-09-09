@@ -8,7 +8,9 @@ mod util;
 mod db;
 
 use state::{AppSettings, DeviceInfo, MdnsState, PendingIncoming, SessionState, TcpState};
+use tauri::Manager;
 use std::sync::Arc;
+use crate::db::Db;
 
 use crate::state::ClientState;
 
@@ -18,13 +20,15 @@ fn default_download_dir() -> std::path::PathBuf {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let device_info = Arc::new(DeviceInfo::new());
+
     tauri::Builder::default()
         .manage(Arc::new(DeviceInfo::new()))
         .manage(Arc::new(ClientState::new()))
         .manage(Arc::new(MdnsState::new()))
         .manage(Arc::new(SessionState::new("My Network")))
         .manage(Arc::new(TcpState::new()))
-        .manage(Arc::new(AppSettings::new(default_download_dir())))
+        // .manage(Arc::new(AppSettings::new(default_download_dir())))
         .manage(Arc::new(PendingIncoming::new()))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -32,7 +36,9 @@ pub fn run() {
         .setup(move |app| {
             let data_dir = app.path().app_data_dir().expect("no app data directory available");
             std::fs::create_dir_all(&data_dir).expect("failed to create app data directory");
-            let db_path = data_dir.join("nearby.db");
+            let db_path = data_dir.join("oneforall.db");
+            println!("Data directory: {:?}", data_dir);
+            println!("Database path: {:?}", db_path);
 
             let default_dir = default_download_dir();
             let db = Db::open(&db_path, &device_info.name, &default_dir.to_string_lossy())
@@ -76,6 +82,7 @@ pub fn run() {
             network::receive::list_incomplete_transfers,
             network::transfers::cancel_transfer,
         ])
-        .run(tauri::generate_context!())        .expect("error while running tauri application");
+        .run(tauri::generate_context!())        
+        .expect("error while running tauri application");
 }
 
