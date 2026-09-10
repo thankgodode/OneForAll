@@ -1,5 +1,5 @@
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, PeerInfo, HOST_PEER_ID};
-use crate::state::{ClientState, DeviceInfo, SessionState};
+use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::net::tcp::OwnedReadHalf;
@@ -129,10 +129,16 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
 /// side: `ClientState` clears immediately rather than waiting for the
 /// host to acknowledge, since there's nothing meaningful to wait for.
 #[tauri::command]
-pub fn leave_network(client: State<'_, Arc<ClientState>>) {
+pub fn leave_network(client: State<'_, Arc<ClientState>>, tcp_state:State<'_,Arc<TcpState>>) {
     if let Some(tx) = client.outbox.lock().unwrap().take() {
         let _ = tx.send(ControlMessage::Leave);
     }
+    
+    let lock = tcp_state.active_transfers.lock().unwrap();
+    for (_, handle)  in &*lock{
+        handle.cancel.cancel();
+    }
+    
     *client.my_peer_id.lock().unwrap() = None;
 }
 
