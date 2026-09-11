@@ -489,7 +489,7 @@ export default function App() {
   return (
     <div className="lan-app">
       <GlobalStyle />
-      <TitleBar title="Nearby" />
+      {/* <TitleBar title="Nearby" /> */}
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <Sidebar view={view} setView={setView} profile={profile} network={network} />
