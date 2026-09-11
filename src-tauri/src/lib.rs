@@ -60,6 +60,7 @@ pub fn run() {
             state::settings::set_avatar_color,
             // session access control
             state::session::set_join_code,
+            
             state::session::set_auto_accept,
             // mdns
             mdns::advertise::advertise_service,
@@ -81,6 +82,7 @@ pub fn run() {
             network::receive::respond_to_incoming_file,
             network::receive::list_incomplete_transfers,
             network::transfers::cancel_transfer,
+            network::transfers::remove_incomplete_files,
         ])
         .run(tauri::generate_context!())        
         .expect("error while running tauri application");

@@ -335,6 +335,11 @@ export default function App() {
       return;
     }
     if (action === "remove") {
+      api.removeIncomplete(id).catch((e) => {
+        console.log("Error: ", e);
+        toast("Failed to remove incomplete file", true)
+      }
+      )
       setTransfers((prev) => prev.filter((t) => t.id !== id));
       return;
     }

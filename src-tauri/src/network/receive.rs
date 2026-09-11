@@ -12,6 +12,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(250);
@@ -200,8 +201,23 @@ async fn stream_to_disk(
                 _ = cancel.cancelled() => {
                     return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
                 }
-                n = socket.read(&mut buf) => n?,
+
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    socket.read(&mut buf),
+                ) => {
+                    match result {
+                        Ok(n) => n?,
+                        Err(_) => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "peer inactive",
+                            ));
+                        }
+                    }
+                },
             };
+
             if n == 0 { break; } // peer closed the connection
             writer.write_all(&buf[..n]).await?;
             received += n as u64;
@@ -233,7 +249,14 @@ async fn stream_to_disk(
             let _ = app.emit("transfer-cancelled", &transfer_id);
             let _ = tokio::fs::remove_file(&dest_path).await;
         }
+
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut =>{
+            println!("Network disconnected :(");
+            let _ = app.emit("transfer-cancelled", &transfer_id);
+            let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
+        }
         _ => {
+            println!("connection lost :(");
             // Connection lost, not explicitly cancelled — THIS is the
             // "unexpected disconnect" case the resume feature exists
             // for. Deliberately keep both the partial file and the DB
