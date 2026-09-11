@@ -169,6 +169,7 @@ export default function App() {
         }
       } catch {
         // not fatal — just means no restored rows this launch
+
       }
 
       if (cancelled) return;
