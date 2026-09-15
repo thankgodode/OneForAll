@@ -9,8 +9,14 @@
 //!    after their `ConnectionKind` frame — no further framing needed since
 //!    the size is already known from it.
 
+use std::{net::TcpStream, sync::Arc};
+
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
+
+use crate::{db::Db, state::TcpState};
 
 // `rename_all = "camelCase"` on every struct that crosses the JS boundary
 // (this one, and everything in events.rs) is deliberate and load-bearing:
@@ -52,6 +58,12 @@ pub enum ConnectionKind {
         peer_id: String,
         transfer_id: String,
     },
+    TriggerResend{
+        file_path: String,
+        transfer_id: String,
+        size: u64,
+        starting_sent: u64,
+    }
 }
 
 /// The receiver's answer to `ConnectionKind::ResumeTransfer` — how many

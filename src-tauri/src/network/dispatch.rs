@@ -1,12 +1,15 @@
 use crate::context::AppContext;
+use crate::network::send::stream_from_disk;
 use crate::network::{
     control::handle_control_connection,
     receive::{receive_incoming_transfer, resume_incoming_transfer},
 };
 use crate::protocol::{recv_msg, ConnectionKind};
+use crate::state::TransferHandle;
 use std::net::SocketAddr;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 /// Entry point for every connection accepted on the hosting socket. Reads
 /// the first frame to decide whether this is a long-lived Control
@@ -42,6 +45,22 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
             // once was.
             let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
             resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
+        }
+        ConnectionKind::TriggerResend{file_path, transfer_id, size, starting_sent} => {
+            println!("Resend triggered.");
+
+            let _ = app.emit("transfer-resumed", (&transfer_id, starting_sent));
+
+            println!("Path: {:?}", file_path);
+
+            let cancel = CancellationToken::new();
+            let db = ctx.db;
+            let task = tokio::spawn(stream_from_disk(
+                socket, file_path, transfer_id.clone(), size, starting_sent, app.clone(), cancel.clone(), db.clone(),
+            ));
+
+            let tcp_state = ctx.tcp;
+            tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
         }
     }
 }
