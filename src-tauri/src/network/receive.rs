@@ -133,26 +133,10 @@ pub async fn resume_incoming_transfer(
         }
     };
 
-    // Matched on device_name, not peer_id — a peer that had to rejoin
-    // (exactly the scenario this feature handles) gets a brand new
-    // peer_id every time (see control.rs), so comparing peer_id here
-    // would reject the most common legitimate resume case. device_name
-    // is a far more stable signal across a rejoin, if not a perfectly
-    // unique one — see the note on IncompleteTransfer in db.rs.
     if record.peer_device_name != from_peer.device_name {
         let _ = app.emit("transfer-failed", (&transfer_id, "This transfer belongs to a different device"));
         return;
     }
-
-    // let dest_path = PathBuf::from(&record.file_path);
-    // let already_have = match tokio::fs::metadata(&dest_path).await {
-    //     Ok(meta) => meta.len(),
-    //     Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
-    // };
-
-    // if send_msg(&mut socket, &ResumeOffset { bytes_received: already_have }).await.is_err() {
-    //     return;
-    // }
 
     let file = match tokio::fs::OpenOptions::new().append(true).open(&dest_path).await {
         Ok(f) => f,
@@ -182,14 +166,6 @@ async fn stream_to_disk(
     cancel: CancellationToken,
     db: Arc<Db>,
 ) {
-    // Explicit capacity, matching TRANSFER_CHUNK_SIZE — without this,
-    // BufWriter defaults to an internal 8KB buffer, decoupled from
-    // whatever we just read from the socket. Every write_all call here
-    // is already TRANSFER_CHUNK_SIZE bytes; giving BufWriter the same
-    // capacity keeps its own buffering from doing anything counter to
-    // what our chunking already intends, rather than relying on an
-    // internal bypass-when-larger-than-buffer behavior to make the
-    // mismatch harmless.
     let mut writer = BufWriter::with_capacity(TRANSFER_CHUNK_SIZE, file);
     let mut buf = vec![0u8; TRANSFER_CHUNK_SIZE];
     let mut received: u64 = starting_received;
@@ -254,15 +230,11 @@ async fn stream_to_disk(
 
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut =>{
             println!("Network disconnected :(");
-            let _ = app.emit("transfer-cancelled", &transfer_id);
+            // let _ = app.emit("transfer-cancelled", &transfer_id);
             let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
         }
         _ => {
             println!("connection lost :(");
-            // Connection lost, not explicitly cancelled — THIS is the
-            // "unexpected disconnect" case the resume feature exists
-            // for. Deliberately keep both the partial file and the DB
-            // record: deleting either here would make resume impossible.
             let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
         }
     }

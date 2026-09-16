@@ -49,9 +49,7 @@ pub enum ConnectionKind {
     /// either side sends a single raw file byte — that response is what
     /// tells the sender where in its local file to seek to.
     ResumeTransfer {
-        file_path: String,
         transfer_id: String,
-        size: u64,
         starting_sent: u64,
     },
     // TriggerResend{

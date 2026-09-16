@@ -139,26 +139,18 @@ pub async fn resume_transfer(
     let tcp_state = tcp_state.inner().clone();
     let db = db.inner().clone();
     tokio::spawn(async move {
-        resume_one_file(app, tcp_state, db, record, target, my_peer_id).await;
+        resume_one_file(app, tcp_state, db, record, target).await;
     });
     Ok(())
 }
 
-async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, record: IncompleteTransfer, target: PeerInfo, my_peer_id: String) {
+async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, record: IncompleteTransfer, target: PeerInfo) {
     let transfer_id = record.transfer_id.clone();
 
     let Ok(mut socket) = TcpStream::connect(&target.addr).await else {
         let _ = app.emit("transfer-failed", (&transfer_id, "Connection failed"));
         return;
     };
-
-    // let offset: ResumeOffset = match recv_msg(&mut socket).await {
-    //     Ok(o) => o,
-    //     Err(_) => {
-    //         let _ = app.emit("transfer-failed", (&transfer_id, "Host couldn't resume this transfer"));
-    //         return;
-    //     }
-    // };
 
     let dest_path = PathBuf::from(&record.file_path);
     let already_have = match tokio::fs::metadata(&dest_path).await {
@@ -167,7 +159,7 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
     };
     
     let sent_header = send_msg(&mut socket, &ConnectionKind::ResumeTransfer {
-        transfer_id: transfer_id.clone(), file_path: record.file_path.clone(),starting_sent:already_have, size:record.total_size
+        transfer_id: transfer_id.clone(), starting_sent:already_have, 
     }).await;
     
     if sent_header.is_err() {

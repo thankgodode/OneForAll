@@ -38,16 +38,9 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
             ).await;
         }
         ConnectionKind::ResumeTransfer {
-            file_path,
             transfer_id,
-            size,
             starting_sent
         } => {
-            // Same membership check as a fresh Transfer — a resume is
-            // still just a peer sending you bytes, and still needs to be
-            // someone currently in the session, not just someone who
-            // once was.
-            // let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
             let app = app.clone();
 
             let record = match ctx.db.get_incomplete_transfer(&transfer_id) {
@@ -63,11 +56,6 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
             let db = ctx.db.clone();
             let cancel = CancellationToken::new();
             stream_from_disk(socket, record.file_path,transfer_id,record.total_size,starting_sent,app, cancel, db).await;
-            // resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
         }
-        // ConnectionKind::TriggerResend { file_path, transfer_id, size, starting_sent }=>{
-
-        // }
-
     }
 }
