@@ -152,6 +152,7 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
         return;
     };
 
+
     // let offset: ResumeOffset = match recv_msg(&mut socket).await {
     //     Ok(o) => o,
     //     Err(_) => {
@@ -181,6 +182,34 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
     let task = tokio::spawn(resume_incoming_transfer(socket, transfer_id.clone(), target, tcp_state.clone(), db, app,dest_path,already_have));
 
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+
+    let offset: ResumeOffset = match recv_msg(&mut socket).await {
+        Ok(o) => o,
+        Err(_) => {
+            let _ = app.emit("transfer-failed", (&transfer_id, "Host couldn't resume this transfer"));
+            return;
+        }
+    };
+
+    match send_msg(&mut socket, &ConnectionKind::TriggerResend{
+        file_path:record.file_path, 
+        transfer_id:transfer_id.clone(), 
+        size:record.total_size, 
+        starting_sent:offset.bytes_received
+    }).await{
+        Ok(_)=>{
+            
+        },
+        Err(_)=>{}
+    }
+    // let sent_header = send_msg(&mut socket, &ConnectionKind::ResumeTransfer {
+    //     peer_id: my_peer_id, transfer_id: transfer_id.clone(),
+    // }).await;
+    // if sent_header.is_err() {
+    //     let _ = app.emit("transfer-failed", (&transfer_id, "Failed to reconnect"));
+    //     return;
+    // }
+
 }
 
 pub async fn stream_from_disk(
@@ -216,11 +245,25 @@ pub async fn stream_from_disk(
                 _ = cancel.cancelled() => {
                     return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
                 }
-                n = file.read(&mut buf) => n?,
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    file.read(&mut buf),
+                ) =>{
+                    match result{
+                        Ok(n) => n?,
+                        Err(_) => {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "peer inactive",
+                            ));
+                        }
+                    }
+                }
             };
             if n == 0 { break; }
             socket.write_all(&buf[..n]).await?;
             sent += n as u64;
+            println!("Buffer: {:?} ", buf);
 
             if last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL || sent >= size {
                 let elapsed = start.elapsed().as_secs_f64().max(0.001);
@@ -232,6 +275,7 @@ pub async fn stream_from_disk(
                 });
                 last_emit = tokio::time::Instant::now();
             }
+
         }
         socket.flush().await
     }.await;
@@ -243,12 +287,21 @@ pub async fn stream_from_disk(
         }
         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
             // Explicit user cancel — true abandonment.
+            println!("Network interruption");
             let _ = db.remove_incomplete_transfer(&transfer_id);
             let _ = app.emit("transfer-cancelled", &transfer_id);
         }
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut =>{
+            println!("Peer disconnected :(");
+            let _ = app.emit("transfer-cancelled", &transfer_id);
+            let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
+        }
         _ => {
+
+            println!("Connection lost...");
             // Connection lost, not explicitly cancelled — kept resumable
             // on purpose; see the matching note in receive.rs.
+            let _ = app.emit("transfer-cancelled", &transfer_id);
             let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
         }
     }
