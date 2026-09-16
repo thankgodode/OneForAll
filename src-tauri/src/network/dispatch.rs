@@ -1,4 +1,5 @@
 use crate::context::AppContext;
+use crate::network::send::stream_from_disk;
 use crate::network::{
     control::handle_control_connection,
     receive::{receive_incoming_transfer, resume_incoming_transfer},
@@ -7,6 +8,7 @@ use crate::protocol::{recv_msg, ConnectionKind};
 use std::net::SocketAddr;
 use tauri::AppHandle;
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 /// Entry point for every connection accepted on the hosting socket. Reads
 /// the first frame to decide whether this is a long-lived Control
@@ -35,13 +37,27 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
                 ctx.settings, ctx.pending_incoming, ctx.tcp, ctx.db, app,
             ).await;
         }
-        ConnectionKind::ResumeTransfer { peer_id, transfer_id } => {
+        ConnectionKind::ResumeTransfer {
+            file_path,
+            transfer_id,
+            size,
+            starting_sent
+        } => {
             // Same membership check as a fresh Transfer — a resume is
             // still just a peer sending you bytes, and still needs to be
             // someone currently in the session, not just someone who
             // once was.
-            let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
-            resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
+            // let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
+
+            let app = app.clone();
+            let db = ctx.db.clone();
+            let cancel = CancellationToken::new();
+            stream_from_disk(socket, file_path,transfer_id,size,starting_sent,app, cancel, db).await;
+            // resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
         }
+        // ConnectionKind::TriggerResend { file_path, transfer_id, size, starting_sent }=>{
+
+        // }
+
     }
 }

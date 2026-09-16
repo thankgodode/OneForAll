@@ -122,6 +122,8 @@ pub async fn resume_incoming_transfer(
     tcp_state: Arc<TcpState>,
     db: Arc<Db>,
     app: AppHandle,
+    dest_path: PathBuf,
+    already_have: u64   
 ) {
     let record = match db.get_incomplete_transfer(&transfer_id) {
         Ok(Some(r)) => r,
@@ -142,15 +144,15 @@ pub async fn resume_incoming_transfer(
         return;
     }
 
-    let dest_path = PathBuf::from(&record.file_path);
-    let already_have = match tokio::fs::metadata(&dest_path).await {
-        Ok(meta) => meta.len(),
-        Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
-    };
+    // let dest_path = PathBuf::from(&record.file_path);
+    // let already_have = match tokio::fs::metadata(&dest_path).await {
+    //     Ok(meta) => meta.len(),
+    //     Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
+    // };
 
-    if send_msg(&mut socket, &ResumeOffset { bytes_received: already_have }).await.is_err() {
-        return;
-    }
+    // if send_msg(&mut socket, &ResumeOffset { bytes_received: already_have }).await.is_err() {
+    //     return;
+    // }
 
     let file = match tokio::fs::OpenOptions::new().append(true).open(&dest_path).await {
         Ok(f) => f,

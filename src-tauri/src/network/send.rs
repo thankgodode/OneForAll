@@ -1,10 +1,11 @@
 use crate::db::{Db, IncompleteTransfer};
 use crate::events::{TransferProgress, TransferStarted};
 use crate::network::TRANSFER_CHUNK_SIZE;
+use crate::network::receive::resume_incoming_transfer;
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, PeerInfo, ResumeOffset};
 use crate::state::{SessionState, TcpState, TransferHandle};
 use std::io::SeekFrom;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -127,7 +128,7 @@ pub async fn resume_transfer(
 ) -> Result<(), String> {
     let record = db.get_incomplete_transfer(&transfer_id).map_err(|e| e.to_string())?
         .ok_or("No record of this transfer")?;
-    if record.direction != "send" {
+    if record.direction == "send" {
         return Err("This transfer was incoming, not outgoing".into());
     }
 
@@ -151,32 +152,38 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
         return;
     };
 
+    // let offset: ResumeOffset = match recv_msg(&mut socket).await {
+    //     Ok(o) => o,
+    //     Err(_) => {
+    //         let _ = app.emit("transfer-failed", (&transfer_id, "Host couldn't resume this transfer"));
+    //         return;
+    //     }
+    // };
+
+    let dest_path = PathBuf::from(&record.file_path);
+    let already_have = match tokio::fs::metadata(&dest_path).await {
+        Ok(meta) => meta.len(),
+        Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
+    };
+    
     let sent_header = send_msg(&mut socket, &ConnectionKind::ResumeTransfer {
-        peer_id: my_peer_id, transfer_id: transfer_id.clone(),
+        transfer_id: transfer_id.clone(), file_path: record.file_path.clone(),starting_sent:already_have, size:record.total_size
     }).await;
+    
     if sent_header.is_err() {
         let _ = app.emit("transfer-failed", (&transfer_id, "Failed to reconnect"));
         return;
     }
 
-    let offset: ResumeOffset = match recv_msg(&mut socket).await {
-        Ok(o) => o,
-        Err(_) => {
-            let _ = app.emit("transfer-failed", (&transfer_id, "Host couldn't resume this transfer"));
-            return;
-        }
-    };
-
-    let _ = app.emit("transfer-resumed", (&transfer_id, offset.bytes_received));
+    let _ = app.emit("transfer-resumed", (&transfer_id, already_have));
 
     let cancel = CancellationToken::new();
-    let task = tokio::spawn(stream_from_disk(
-        socket, record.file_path, transfer_id.clone(), record.total_size, offset.bytes_received, app.clone(), cancel.clone(), db.clone(),
-    ));
+    let task = tokio::spawn(resume_incoming_transfer(socket, transfer_id.clone(), target, tcp_state.clone(), db, app,dest_path,already_have));
+
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
 }
 
-async fn stream_from_disk(
+pub async fn stream_from_disk(
     mut socket: TcpStream,
     file_path: String,
     transfer_id: String,
