@@ -49,11 +49,21 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
             // someone currently in the session, not just someone who
             // once was.
             // let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
-
             let app = app.clone();
+
+            let record = match ctx.db.get_incomplete_transfer(&transfer_id) {
+                Ok(Some(r)) => r,
+                _ => {
+                    let _ = app.emit("transfer-failed", (&transfer_id, "No record of this transfer to resume"));
+                    return;
+                }
+            };
+
+            let _ = app.emit("transfer-resumed", (&transfer_id, starting_sent));
+
             let db = ctx.db.clone();
             let cancel = CancellationToken::new();
-            stream_from_disk(socket, file_path,transfer_id,size,starting_sent,app, cancel, db).await;
+            stream_from_disk(socket, record.file_path,transfer_id,record.total_size,starting_sent,app, cancel, db).await;
             // resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
         }
         ConnectionKind::TriggerResend{file_path, transfer_id, size, starting_sent} => {
