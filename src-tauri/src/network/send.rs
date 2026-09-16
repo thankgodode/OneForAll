@@ -1,10 +1,11 @@
 use crate::db::{Db, IncompleteTransfer};
 use crate::events::{TransferProgress, TransferStarted};
 use crate::network::TRANSFER_CHUNK_SIZE;
+use crate::network::receive::resume_incoming_transfer;
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, PeerInfo, ResumeOffset};
 use crate::state::{SessionState, TcpState, TransferHandle};
 use std::io::SeekFrom;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -151,6 +152,37 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
         return;
     };
 
+
+    // let offset: ResumeOffset = match recv_msg(&mut socket).await {
+    //     Ok(o) => o,
+    //     Err(_) => {
+    //         let _ = app.emit("transfer-failed", (&transfer_id, "Host couldn't resume this transfer"));
+    //         return;
+    //     }
+    // };
+
+    let dest_path = PathBuf::from(&record.file_path);
+    let already_have = match tokio::fs::metadata(&dest_path).await {
+        Ok(meta) => meta.len(),
+        Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
+    };
+    
+    let sent_header = send_msg(&mut socket, &ConnectionKind::ResumeTransfer {
+        transfer_id: transfer_id.clone(), file_path: record.file_path.clone(),starting_sent:already_have, size:record.total_size
+    }).await;
+    
+    if sent_header.is_err() {
+        let _ = app.emit("transfer-failed", (&transfer_id, "Failed to reconnect"));
+        return;
+    }
+
+    let _ = app.emit("transfer-resumed", (&transfer_id, already_have));
+
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(resume_incoming_transfer(socket, transfer_id.clone(), target, tcp_state.clone(), db, app,dest_path,already_have));
+
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+
     let offset: ResumeOffset = match recv_msg(&mut socket).await {
         Ok(o) => o,
         Err(_) => {
@@ -177,6 +209,7 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
     //     let _ = app.emit("transfer-failed", (&transfer_id, "Failed to reconnect"));
     //     return;
     // }
+
 }
 
 pub async fn stream_from_disk(
