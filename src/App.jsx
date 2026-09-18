@@ -17,7 +17,7 @@ import SettingsView from "./views/SettingsView";
 
 import { initialPrintJobs } from "./data/mockData"; // printing has no backend yet — stays mocked
 import { HOST_PEER_ID } from "./data/protocol";
-import { fmtBytes, fmtSpeed, fmtEta } from "./utils/format";
+import { fmtBytes, fmtSpeed, fmtEta, fmtTimeAgo } from "./utils/format";
 import { toUiDevice } from "./utils/peer";
 
 import * as api from "./api/commands";
@@ -150,20 +150,27 @@ export default function App() {
             const existingIds = new Set(prev.map((t) => t.id));
             const restored = incomplete
               .filter((t) => !existingIds.has(t.transferId))
-              .map((t) => ({
-                id: t.transferId,
-                file: t.filename,
-                sizeBytes: t.totalSize,
-                size: fmtBytes(t.totalSize),
-                target: t.peerDisplayName,
-                peerId: null, // re-resolved by device name when actually resumed — see resume_transfer
-                direction: t.direction,
-                status: "failed",
-                progress: 0,
-                speed: "—",
-                eta: "—",
-                error: "Interrupted before this session — resume once reconnected",
-              }));
+              .map((t) => {
+                // interruptedAt can be null if the app crashed mid-stream
+                // rather than stopping through the normal cleanup path —
+                // createdAt is the honest fallback for "how long ago"
+                // rather than showing nothing.
+                const since = t.interruptedAt ?? t.createdAt;
+                return {
+                  id: t.transferId,
+                  file: t.filename,
+                  sizeBytes: t.totalSize,
+                  size: fmtBytes(t.totalSize),
+                  target: t.peerDisplayName,
+                  peerId: null, // re-resolved by device name when actually resumed — see resume_transfer
+                  direction: t.direction,
+                  status: "failed",
+                  progress: 0,
+                  speed: "—",
+                  eta: "—",
+                  error: `Interrupted ${fmtTimeAgo(since)} — resume once reconnected`,
+                };
+              });
             return [...restored, ...prev];
           });
         }
@@ -203,17 +210,31 @@ export default function App() {
         onPeerJoined: (peer) => {
           setRoster((prev) => (prev.some((p) => p.id === peer.id) ? prev : [...prev, peer]));
         },
-        onPeerLeft: (peerId) => {
-          setRoster((prev) => prev.filter((p) => p.id !== peerId));
+        onPeerLeft: (peerId, reason) => {
+          setRoster((prev) => {
+            const peer = prev.find((p) => p.id === peerId);
+            // Reason-aware messaging is the whole point of the backend
+            // change: "left" is routine and doesn't need a toast at all;
+            // "timedOut" is the one worth flagging, since it's the only
+            // case where "gone" might just be temporary.
+            if (peer && reason === "timedOut") toast(`Lost connection to ${peer.name}`, true);
+            return prev.filter((p) => p.id !== peerId);
+          });
         },
         onKicked: (reason) => {
           setNetwork(emptyNetwork);
           setRoster([]);
           toast(`Removed from network: ${reason}`, true);
         },
-        onDisconnected: () => {
+        onDisconnected: (reason) => {
           setNetwork(emptyNetwork);
           setRoster([]);
+          // In practice this is always "timedOut" — an explicit Leave or
+          // Kick already resolves through their own dedicated events
+          // before this one would ever fire (see join.rs) — but matching
+          // on it rather than assuming keeps this honest if that ever
+          // changes on the backend.
+          toast(reason === "timedOut" ? "Disconnected from the network — reconnect once you're back" : "Disconnected from the network", true);
         },
 
         onIncomingFileRequest: (req) => {
@@ -335,11 +356,6 @@ export default function App() {
       return;
     }
     if (action === "remove") {
-      api.removeIncomplete(id).catch((e) => {
-        console.log("Error: ", e);
-        toast("Failed to remove incomplete file", true)
-      }
-      )
       setTransfers((prev) => prev.filter((t) => t.id !== id));
       return;
     }
@@ -352,10 +368,17 @@ export default function App() {
         toast("Join or host a network before resuming a transfer", true);
         return;
       }
-      // No need to check WHICH kind of failure this was — resume_transfer
-      // just errors cleanly ("No record of this transfer") if there's
-      // nothing to continue, e.g. a send that never actually connected.
-      api.resumeTransfer(network.myPeerId, id).catch((e) => toast(`Couldn't resume: ${e}`, true));
+      const t = transfers.find((x) => x.id === id);
+      // Direction decides which side initiates: if we were the receiver,
+      // we already know our own partial file's size, so we reach out
+      // directly (requestResume) rather than waiting for the original
+      // sender to remember and reconnect (resumeTransfer). No need to
+      // check WHICH kind of failure this was beyond that — either
+      // command errors cleanly ("No record of this transfer") if
+      // there's nothing to continue, e.g. a send that never actually
+      // connected in the first place.
+      const resume = t?.direction === "receive" ? api.requestResume : api.resumeTransfer;
+      resume(network.myPeerId, id).catch((e) => toast(`Couldn't resume: ${e}`, true));
       return;
     }
     if (action === "retry") {
@@ -489,7 +512,7 @@ export default function App() {
   return (
     <div className="lan-app">
       <GlobalStyle />
-      {/* <TitleBar title="Nearby" /> */}
+      <TitleBar title="Nearby" />
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <Sidebar view={view} setView={setView} profile={profile} network={network} />

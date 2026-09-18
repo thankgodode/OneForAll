@@ -1,20 +1,20 @@
 use crate::context::AppContext;
-use crate::network::send::stream_from_disk;
 use crate::network::{
     control::handle_control_connection,
     receive::{receive_incoming_transfer, resume_incoming_transfer},
+    send::serve_resume_request,
 };
 use crate::protocol::{recv_msg, ConnectionKind};
 use crate::state::TransferHandle;
 use std::net::SocketAddr;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::net::TcpStream;
-use tokio_util::sync::CancellationToken;
 
 /// Entry point for every connection accepted on the hosting socket. Reads
 /// the first frame to decide whether this is a long-lived Control
-/// connection, a fresh file Transfer, or a ResumeTransfer continuing an
-/// interrupted one, then hands off accordingly.
+/// connection, a fresh file Transfer, or one of the two resume
+/// directions (sender-initiated ResumeTransfer, or receiver-initiated
+/// RequestResume), then hands off accordingly.
 pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: AppContext, app: AppHandle) {
     let kind: ConnectionKind = match recv_msg(&mut socket).await {
         Ok(k) => k,
@@ -23,7 +23,7 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
 
     match kind {
         ConnectionKind::Control => {
-            handle_control_connection(socket, addr, ctx.session, ctx.device, app).await;
+            handle_control_connection(socket, addr, ctx.session, ctx.device, ctx.tcp, app).await;
         }
         ConnectionKind::Transfer { peer_id, transfer_id, filename, size } => {
             // The membership check happens here, before a single byte of
@@ -38,49 +38,21 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
                 ctx.settings, ctx.pending_incoming, ctx.tcp, ctx.db, app,
             ).await;
         }
-        ConnectionKind::ResumeTransfer {
-            file_path,
-            transfer_id,
-            size,
-            starting_sent
-        } => {
+        ConnectionKind::ResumeTransfer { peer_id, transfer_id } => {
             // Same membership check as a fresh Transfer — a resume is
             // still just a peer sending you bytes, and still needs to be
             // someone currently in the session, not just someone who
             // once was.
-            // let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
-            let app = app.clone();
-
-            let record = match ctx.db.get_incomplete_transfer(&transfer_id) {
-                Ok(Some(r)) => r,
-                _ => {
-                    let _ = app.emit("transfer-failed", (&transfer_id, "No record of this transfer to resume"));
-                    return;
-                }
-            };
-
-            let _ = app.emit("transfer-resumed", (&transfer_id, starting_sent));
-
-            let db = ctx.db.clone();
-            let cancel = CancellationToken::new();
-            stream_from_disk(socket, record.file_path,transfer_id,record.total_size,starting_sent,app, cancel, db).await;
-            // resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
+            let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
+            resume_incoming_transfer(socket, transfer_id, from_peer, ctx.tcp, ctx.db, app).await;
         }
-        ConnectionKind::TriggerResend{file_path, transfer_id, size, starting_sent} => {
-            println!("Resend triggered.");
-
-            let _ = app.emit("transfer-resumed", (&transfer_id, starting_sent));
-
-            println!("Path: {:?}", file_path);
-
-            let cancel = CancellationToken::new();
-            let db = ctx.db;
-            let task = tokio::spawn(stream_from_disk(
-                socket, file_path, transfer_id.clone(), size, starting_sent, app.clone(), cancel.clone(), db.clone(),
-            ));
-
-            let tcp_state = ctx.tcp;
-            tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+        ConnectionKind::RequestResume { peer_id, transfer_id, bytes_already_have } => {
+            // The receiver-initiated direction: WE are the original
+            // sender here, being asked to continue from an offset the
+            // other side already computed. Same membership check as
+            // everything else — being asked to resume doesn't skip it.
+            let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
+            serve_resume_request(socket, transfer_id, bytes_already_have, from_peer, ctx.tcp, ctx.db, app).await;
         }
     }
 }

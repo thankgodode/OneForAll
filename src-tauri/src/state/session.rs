@@ -1,6 +1,8 @@
 use crate::protocol::{ControlMessage, PeerInfo};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 /// A peer this device considers a member of the current session.
@@ -11,9 +13,17 @@ use tokio::sync::{mpsc::UnboundedSender, oneshot};
 /// direct connection to those other peers, so `outbox` is `None` — the
 /// entry exists purely so `is_member`/`peer_info` work identically
 /// whether this device is the host or a joined client.
+///
+/// `last_seen` and `kicked` back the heartbeat mechanism (see
+/// control.rs / join.rs): the connection-handling loop updates
+/// `last_seen` on every message it receives, and checks `kicked` at
+/// disconnect time to report an honest `DisconnectReason` instead of
+/// treating every disconnect as an unexplained timeout.
 pub struct PeerHandle {
     pub info: PeerInfo,
     pub outbox: Option<UnboundedSender<ControlMessage>>,
+    pub last_seen: Mutex<Instant>,
+    pub kicked: AtomicBool,
 }
 
 /// A join request sent to the frontend for approval but not yet decided.
@@ -55,8 +65,20 @@ impl SessionState {
         self.peers.lock().unwrap().get(peer_id).map(|p| p.info.clone())
     }
 
+    /// Finds a currently-connected peer by device_name rather than
+    /// peer_id — used for resuming a transfer, where the persisted
+    /// record's peer_id may be stale (a peer that reconnected gets a
+    /// fresh one every join; see db::IncompleteTransfer). Shared by both
+    /// resume directions: the sender resuming a send, and the receiver
+    /// requesting the rest of a receive.
+    pub fn find_peer_by_device_name(&self, device_name: &str) -> Option<PeerInfo> {
+        self.peers.lock().unwrap().values().map(|p| &p.info).find(|p| p.device_name == device_name).cloned()
+    }
+
     pub fn insert_peer(&self, info: PeerInfo, outbox: Option<UnboundedSender<ControlMessage>>) {
-        self.peers.lock().unwrap().insert(info.id.clone(), PeerHandle { info, outbox });
+        self.peers.lock().unwrap().insert(info.id.clone(), PeerHandle {
+            info, outbox, last_seen: Mutex::new(Instant::now()), kicked: AtomicBool::new(false),
+        });
     }
 
     /// Convenience for the mirrored-roster case described on `PeerHandle`
@@ -94,6 +116,53 @@ impl SessionState {
             _ => false,
         }
     }
+
+    /// Records that we just heard from `peer_id` — called on every
+    /// successful receive in the connection-handling loop, not just on
+    /// Ping. Any traffic at all counts as "still alive."
+    pub fn touch_peer(&self, peer_id: &str) {
+        if let Some(peer) = self.peers.lock().unwrap().get(peer_id) {
+            *peer.last_seen.lock().unwrap() = Instant::now();
+        }
+    }
+
+    /// How long since we last heard anything from `peer_id`, in whole
+    /// seconds — `None` if they're not currently a member at all.
+    pub fn seconds_since_seen(&self, peer_id: &str) -> Option<u64> {
+        self.peers.lock().unwrap().get(peer_id).map(|p| p.last_seen.lock().unwrap().elapsed().as_secs())
+    }
+
+    /// Marks a peer as explicitly kicked, BEFORE the Kick message is even
+    /// sent — read later, once the connection actually ends, to report
+    /// `DisconnectReason::Kicked` instead of `TimedOut`. Without this,
+    /// a kick just looks like an ordinary timeout once the connection
+    /// eventually dies, even though the host caused it on purpose.
+    pub fn mark_kicked(&self, peer_id: &str) {
+        if let Some(peer) = self.peers.lock().unwrap().get(peer_id) {
+            peer.kicked.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn was_kicked(&self, peer_id: &str) -> bool {
+        self.peers.lock().unwrap().get(peer_id).map(|p| p.kicked.load(Ordering::Relaxed)).unwrap_or(false)
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerLiveness {
+    pub peer_id: String,
+    pub seconds_since_seen: u64,
+}
+
+/// Lets the frontend show liveness ahead of the full disconnect —
+/// e.g. graying out a device once it's gone quiet for a few seconds,
+/// well before HEARTBEAT_TIMEOUT actually removes them from the roster.
+#[tauri::command]
+pub fn get_peer_liveness(session: tauri::State<'_, Arc<SessionState>>) -> Vec<PeerLiveness> {
+    session.peers.lock().unwrap().iter()
+        .map(|(id, p)| PeerLiveness { peer_id: id.clone(), seconds_since_seen: p.last_seen.lock().unwrap().elapsed().as_secs() })
+        .collect()
 }
 
 /// Backs the "Require approval" toggle and optional join code in the

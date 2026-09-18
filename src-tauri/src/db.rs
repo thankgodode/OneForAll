@@ -51,8 +51,9 @@ pub struct IncompleteTransfer {
     pub filename: String,
     pub file_path: String,
     pub total_size: u64,
-    pub direction: String, // "send" | "receive"
-    pub created_at: i64,   // unix seconds
+    pub direction: String,        // "send" | "receive"
+    pub created_at: i64,          // unix seconds — when the transfer STARTED
+    pub interrupted_at: Option<i64>, // unix seconds — when it last stopped mid-stream; None while actively streaming
 }
 
 impl Db {
@@ -74,9 +75,18 @@ impl Db {
                 file_path TEXT NOT NULL,
                 total_size INTEGER NOT NULL,
                 direction TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                interrupted_at INTEGER
             );"
         )?;
+        // CREATE TABLE IF NOT EXISTS above only defines the shape for a
+        // BRAND NEW database file — it does nothing to a table that
+        // already existed from a previous version without this column.
+        // This covers that case; it fails harmlessly with "duplicate
+        // column" on every run where the column is already present
+        // (which includes every fresh install, since CREATE TABLE just
+        // added it above) — the error is expected and ignored on purpose.
+        let _ = conn.execute("ALTER TABLE incomplete_transfers ADD COLUMN interrupted_at INTEGER", []);
         // CHECK (id = 1) above enforces a singleton row; this only fires
         // the very first time the app runs against a fresh database file.
         conn.execute(
@@ -115,9 +125,22 @@ impl Db {
     pub fn save_incomplete_transfer(&self, t: &IncompleteTransfer) -> rusqlite::Result<()> {
         self.conn.lock().unwrap().execute(
             "INSERT OR REPLACE INTO incomplete_transfers
-             (transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![t.transfer_id, t.peer_display_name, t.peer_device_name, t.filename, t.file_path, t.total_size as i64, t.direction, t.created_at],
+             (transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at, interrupted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![t.transfer_id, t.peer_display_name, t.peer_device_name, t.filename, t.file_path, t.total_size as i64, t.direction, t.created_at, t.interrupted_at],
+        ).map(|_| ())
+    }
+
+    /// Stamps WHEN a transfer stopped mid-stream — called from the
+    /// "keep resumable" branches in receive.rs/send.rs, every time
+    /// (peer left, timed out, or was explicitly paused), not just once.
+    /// A transfer that's dropped and reconnected several times keeps
+    /// getting a FRESH timestamp here, so "interrupted X ago" always
+    /// reflects the MOST RECENT gap, not the first one.
+    pub fn mark_transfer_interrupted(&self, transfer_id: &str, at: i64) -> rusqlite::Result<()> {
+        self.conn.lock().unwrap().execute(
+            "UPDATE incomplete_transfers SET interrupted_at = ?1 WHERE transfer_id = ?2",
+            params![at, transfer_id],
         ).map(|_| ())
     }
 
@@ -127,7 +150,7 @@ impl Db {
 
     pub fn get_incomplete_transfer(&self, transfer_id: &str) -> rusqlite::Result<Option<IncompleteTransfer>> {
         self.conn.lock().unwrap().query_row(
-            "SELECT transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at
+            "SELECT transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at, interrupted_at
              FROM incomplete_transfers WHERE transfer_id = ?1",
             params![transfer_id],
             Self::row_to_transfer,
@@ -139,14 +162,12 @@ impl Db {
 
     pub fn list_incomplete_transfers(&self) -> rusqlite::Result<Vec<IncompleteTransfer>> {
         let conn = self.conn.lock().unwrap();
-        
         let mut stmt = conn.prepare(
-            "SELECT transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at
-             FROM incomplete_transfers ORDER BY created_at DESC"
+            "SELECT transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at, interrupted_at
+            FROM incomplete_transfers ORDER BY created_at DESC"
         )?;
-
-        let x:Result<Vec<IncompleteTransfer>, rusqlite::Error> = stmt.query_map([], Self::row_to_transfer)?.collect(); 
-
+        let x = stmt.query_map([], Self::row_to_transfer)?.collect();
+        // stmt.query_map([], Self::row_to_transfer)?.collect()
         x
     }
 
@@ -160,6 +181,7 @@ impl Db {
             total_size: row.get::<_, i64>(5)? as u64,
             direction: row.get(6)?,
             created_at: row.get(7)?,
+            interrupted_at: row.get(8)?,
         })
     }
 }

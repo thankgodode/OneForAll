@@ -21,6 +21,11 @@ export const setAvatarColor = (color) => invoke("set_avatar_color", { color });
 // --- session access control (host side) ---
 export const setJoinCode = (code) => invoke("set_join_code", { code });
 export const setAutoAccept = (value) => invoke("set_auto_accept", { value });
+// Seconds since each currently-connected peer was last heard from —
+// lets the UI show liveness ahead of the full ~15s heartbeat timeout,
+// e.g. graying out a device that's gone a few seconds quiet. Not polled
+// automatically anywhere yet; call this from a UI that wants it.
+export const getPeerLiveness = () => invoke("get_peer_liveness");
 
 // --- mdns ---
 export const browseService = () => invoke("browse_service");
@@ -51,14 +56,25 @@ export const sendFileToPeers = (myPeerId, filePath, targetPeerIds) =>
 export const respondToIncomingFile = (transferId, accept) =>
   invoke("respond_to_incoming_file", { transferId, accept });
 export const cancelTransfer = (transferId) => invoke("cancel_transfer", { transferId });
-export const removeIncomplete = (transferId) => invoke("remove_incomplete_files", { transferId });
 
 // --- resumable transfers ---
 // listIncompleteTransfers() covers BOTH still-running-app reconnects AND
 // a full app restart — the ledger backing it is on disk (nearby-backend/src/db.rs),
-// not in memory, so it survives either. resumeTransfer() re-resolves the
-// peer by device name (not the old, possibly-stale peer_id) and continues
-// from wherever the receiver's partial file actually left off.
+// not in memory, so it survives either. Both resumeTransfer() and
+// requestResume() re-resolve the peer by device name (not the old,
+// possibly-stale peer_id).
+//
+// Two different directions, not interchangeable:
+// - resumeTransfer(): call this when WE were the original SENDER —
+//   we're the one reconnecting and asking the receiver where it left off.
+// - requestResume(): call this when WE were the original RECEIVER —
+//   we already know our own partial file's size, so we tell the sender
+//   directly rather than asking. This is the direction to prefer in the
+//   UI: the receiver, holding the partial file, is in the best position
+//   to notice a transfer is incomplete and reach out, rather than
+//   waiting for the original sender to remember.
 export const listIncompleteTransfers = () => invoke("list_incomplete_transfers");
 export const resumeTransfer = (myPeerId, transferId) =>
   invoke("resume_transfer", { myPeerId, transferId });
+export const requestResume = (myPeerId, transferId) =>
+  invoke("request_resume", { myPeerId, transferId });

@@ -1,10 +1,9 @@
 import React, { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { stat } from "@tauri-apps/plugin-fs";
 import { Upload, FileText, X, Check, Send } from "lucide-react";
 import DeviceRow from "../components/DeviceRow";
 import StatusChip from "../components/StatusChip";
-import { BaseDirectory, stat } from "@tauri-apps/plugin-fs";
-
 import { fmtBytes } from "../utils/format";
 
 // Send-files flow: pick files, pick one or more recipients, then hand
@@ -32,14 +31,11 @@ export default function SendFilesView({ devices, onSend, toast }) {
     const withMeta = await Promise.all(paths.map(async (path) => {
       let size = 0;
       try {
-        const info = await stat(path,{ baseDir: BaseDirectory.AppLocalData });
-        console.log("INFO: ", info)
-         size = info.size;
-      } catch(e) {
-        console.log("ERROR: ", e)
-         // metadata read failed — still let the file through, just show 0 B
-       }
-
+        const info = await stat(path);
+        size = info.size;
+      } catch {
+        // metadata read failed — still let the file through, just show 0 B
+      }
       const name = path.split(/[\\/]/).pop();
       return { path, name, size };
     }));

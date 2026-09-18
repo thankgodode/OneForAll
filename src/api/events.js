@@ -11,9 +11,9 @@ import { listen } from "@tauri-apps/api/event";
 //   join-pending              ()                         — client: waiting on host
 //   joined-network            (sessionName: string, hostInfo: PeerInfo, roster: PeerInfo[])
 //   peer-joined                PeerInfo
-//   peer-left                   peerId: string
+//   peer-left                   (peerId: string, reason: "left" | "kicked" | "timedOut")
 //   kicked                       reason: string
-//   disconnected-from-network     ()
+//   disconnected-from-network     reason: "left" | "kicked" | "timedOut" (always "timedOut" in practice — see backend)
 //   incoming-file-request           IncomingFileRequest
 //   transfer-started                  { transferId, peerId, peerName, filename, size, direction }
 //   transfer-resumed                   (transferId: string, resumedFromBytes: number)
@@ -35,9 +35,9 @@ export async function subscribeToBackendEvents(handlers) {
     ["join-pending", () => handlers.onJoinPending?.()],
     ["joined-network", ([sessionName, hostInfo, roster]) => handlers.onJoinedNetwork?.(sessionName, hostInfo, roster)],
     ["peer-joined", (peer) => handlers.onPeerJoined?.(peer)],
-    ["peer-left", (peerId) => handlers.onPeerLeft?.(peerId)],
+    ["peer-left", (payload) => handlers.onPeerLeft?.(payload[0], payload[1])],
     ["kicked", (reason) => handlers.onKicked?.(reason)],
-    ["disconnected-from-network", () => handlers.onDisconnected?.()],
+    ["disconnected-from-network", (reason) => handlers.onDisconnected?.(reason)],
     ["incoming-file-request", (req) => handlers.onIncomingFileRequest?.(req)],
     ["transfer-started", (t) => handlers.onTransferStarted?.(t)],
     ["transfer-resumed", ([transferId, resumedFromBytes]) => handlers.onTransferResumed?.(transferId, resumedFromBytes)],
