@@ -1,8 +1,8 @@
 use crate::db::{Db, IncompleteTransfer};
 use crate::events::{IncomingFileRequest, TransferProgress, TransferStarted};
 use crate::network::TRANSFER_CHUNK_SIZE;
-use crate::protocol::{send_msg, PeerInfo, ResumeOffset};
-use crate::state::{AppSettings, PendingIncoming, TcpState, TransferHandle};
+use crate::protocol::{send_msg, ConnectionKind, PeerInfo, ResumeOffset};
+use crate::state::{AppSettings, PendingIncoming, SessionState, TcpState, TransferHandle};
 use crate::util::{sanitize_filename, unique_path};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +12,6 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
-use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(250);
@@ -98,13 +97,15 @@ pub async fn receive_incoming_transfer(
         total_size: size,
         direction: "receive".into(),
         created_at: now_unix(),
+        interrupted_at: None, // hasn't stopped yet — see mark_transfer_interrupted below
     });
 
     let cancel = CancellationToken::new();
+    let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_to_disk(
-        socket, file, transfer_id.clone(), size, 0, app.clone(), dest_path, cancel.clone(), db.clone(),
+        socket, file, transfer_id.clone(), size, 0, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(),
     ));
-    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: from_peer.id, task, cancel, peer_gone });
 }
 
 /// Handles a `ConnectionKind::ResumeTransfer` connection — called from
@@ -122,8 +123,6 @@ pub async fn resume_incoming_transfer(
     tcp_state: Arc<TcpState>,
     db: Arc<Db>,
     app: AppHandle,
-    dest_path: PathBuf,
-    already_have: u64   
 ) {
     let record = match db.get_incomplete_transfer(&transfer_id) {
         Ok(Some(r)) => r,
@@ -133,8 +132,24 @@ pub async fn resume_incoming_transfer(
         }
     };
 
+    // Matched on device_name, not peer_id — a peer that had to rejoin
+    // (exactly the scenario this feature handles) gets a brand new
+    // peer_id every time (see control.rs), so comparing peer_id here
+    // would reject the most common legitimate resume case. device_name
+    // is a far more stable signal across a rejoin, if not a perfectly
+    // unique one — see the note on IncompleteTransfer in db.rs.
     if record.peer_device_name != from_peer.device_name {
         let _ = app.emit("transfer-failed", (&transfer_id, "This transfer belongs to a different device"));
+        return;
+    }
+
+    let dest_path = PathBuf::from(&record.file_path);
+    let already_have = match tokio::fs::metadata(&dest_path).await {
+        Ok(meta) => meta.len(),
+        Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
+    };
+
+    if send_msg(&mut socket, &ResumeOffset { bytes_received: already_have }).await.is_err() {
         return;
     }
 
@@ -149,10 +164,11 @@ pub async fn resume_incoming_transfer(
     let _ = app.emit("transfer-resumed", (&transfer_id, already_have));
 
     let cancel = CancellationToken::new();
+    let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_to_disk(
-        socket, file, transfer_id.clone(), record.total_size, already_have, app.clone(), dest_path, cancel.clone(), db.clone(),
+        socket, file, transfer_id.clone(), record.total_size, already_have, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(),
     ));
-    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: from_peer.id, task, cancel, peer_gone });
 }
 
 async fn stream_to_disk(
@@ -164,8 +180,17 @@ async fn stream_to_disk(
     app: AppHandle,
     dest_path: PathBuf,
     cancel: CancellationToken,
+    peer_gone: CancellationToken,
     db: Arc<Db>,
 ) {
+    // Explicit capacity, matching TRANSFER_CHUNK_SIZE — without this,
+    // BufWriter defaults to an internal 8KB buffer, decoupled from
+    // whatever we just read from the socket. Every write_all call here
+    // is already TRANSFER_CHUNK_SIZE bytes; giving BufWriter the same
+    // capacity keeps its own buffering from doing anything counter to
+    // what our chunking already intends, rather than relying on an
+    // internal bypass-when-larger-than-buffer behavior to make the
+    // mismatch harmless.
     let mut writer = BufWriter::with_capacity(TRANSFER_CHUNK_SIZE, file);
     let mut buf = vec![0u8; TRANSFER_CHUNK_SIZE];
     let mut received: u64 = starting_received;
@@ -179,23 +204,16 @@ async fn stream_to_disk(
                 _ = cancel.cancelled() => {
                     return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
                 }
-
-                result = tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    socket.read(&mut buf),
-                ) => {
-                    match result {
-                        Ok(n) => n?,
-                        Err(_) => {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::TimedOut,
-                                "peer inactive",
-                            ));
-                        }
-                    }
-                },
+                _ = peer_gone.cancelled() => {
+                    // Deliberately a DIFFERENT ErrorKind than the explicit
+                    // cancel above, but handled by the SAME catch-all
+                    // branch below as an ordinary connection-lost failure
+                    // — the peer leaving the session is exactly the
+                    // "interrupted, not abandoned" case resume exists for.
+                    return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "peer left the session"));
+                }
+                n = socket.read(&mut buf) => n?,
             };
-
             if n == 0 { break; } // peer closed the connection
             writer.write_all(&buf[..n]).await?;
             received += n as u64;
@@ -227,14 +245,15 @@ async fn stream_to_disk(
             let _ = app.emit("transfer-cancelled", &transfer_id);
             let _ = tokio::fs::remove_file(&dest_path).await;
         }
-
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut =>{
-            println!("Network disconnected :(");
-            // let _ = app.emit("transfer-cancelled", &transfer_id);
-            let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
-        }
         _ => {
-            println!("connection lost :(");
+            // Covers both an ordinary connection-lost failure AND the
+            // peer_gone case above — both are "the other party isn't
+            // reachable via this session anymore," and both keep the
+            // partial file and DB record so resume stays possible.
+            // Stamping interrupted_at here (not at transfer start) is
+            // what lets the UI show "interrupted X ago" using the MOST
+            // RECENT gap, even across several reconnect attempts.
+            let _ = db.mark_transfer_interrupted(&transfer_id, now_unix());
             let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
         }
     }
@@ -261,4 +280,83 @@ pub fn respond_to_incoming_file(pending: State<'_, Arc<PendingIncoming>>, transf
 #[tauri::command]
 pub fn list_incomplete_transfers(db: State<'_, Arc<Db>>) -> Vec<IncompleteTransfer> {
     db.list_incomplete_transfers().unwrap_or_default()
+}
+
+/// The receiver-initiated resume path — the receiver already has the
+/// partial file, so it's the one in the best position to notice "this
+/// is incomplete" and reach out, rather than waiting for the original
+/// sender to remember and reconnect. Computes the resume offset from
+/// the partial file's ACTUAL size on disk (same principle as the
+/// sender-initiated path in send.rs — never a separately tracked count),
+/// then sends that offset upfront as part of the connection itself, so
+/// no back-and-forth is needed before streaming can begin.
+#[tauri::command]
+pub async fn request_resume(
+    app: AppHandle,
+    session: State<'_, Arc<SessionState>>,
+    tcp_state: State<'_, Arc<TcpState>>,
+    db: State<'_, Arc<Db>>,
+    my_peer_id: String,
+    transfer_id: String,
+) -> Result<(), String> {
+    let record = db.get_incomplete_transfer(&transfer_id).map_err(|e| e.to_string())?
+        .ok_or("No record of this transfer")?;
+    if record.direction != "receive" {
+        return Err("This transfer was outgoing, not incoming".into());
+    }
+
+    let sender = session.find_peer_by_device_name(&record.peer_device_name)
+        .ok_or("That device isn't currently connected — rejoin the network first")?;
+
+    let bytes_already_have = tokio::fs::metadata(&record.file_path).await.map(|m| m.len()).unwrap_or(0);
+
+    let tcp_state = tcp_state.inner().clone();
+    let db = db.inner().clone();
+    tokio::spawn(async move {
+        request_resume_from_sender(app, tcp_state, db, record, sender, my_peer_id, bytes_already_have).await;
+    });
+    Ok(())
+}
+
+async fn request_resume_from_sender(
+    app: AppHandle,
+    tcp_state: Arc<TcpState>,
+    db: Arc<Db>,
+    record: IncompleteTransfer,
+    sender: PeerInfo,
+    my_peer_id: String,
+    bytes_already_have: u64,
+) {
+    let transfer_id = record.transfer_id.clone();
+
+    let Ok(mut socket) = TcpStream::connect(&sender.addr).await else {
+        let _ = app.emit("transfer-failed", (&transfer_id, "Connection failed"));
+        return;
+    };
+
+    let sent_header = send_msg(&mut socket, &ConnectionKind::RequestResume {
+        peer_id: my_peer_id, transfer_id: transfer_id.clone(), bytes_already_have,
+    }).await;
+    if sent_header.is_err() {
+        let _ = app.emit("transfer-failed", (&transfer_id, "Failed to reconnect"));
+        return;
+    }
+
+    let dest_path = PathBuf::from(&record.file_path);
+    let file = match tokio::fs::OpenOptions::new().append(true).open(&dest_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = app.emit("transfer-failed", (&transfer_id, e.to_string()));
+            return;
+        }
+    };
+
+    let _ = app.emit("transfer-resumed", (&transfer_id, bytes_already_have));
+
+    let cancel = CancellationToken::new();
+    let peer_gone = CancellationToken::new();
+    let task = tokio::spawn(stream_to_disk(
+        socket, file, transfer_id.clone(), record.total_size, bytes_already_have, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(),
+    ));
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: sender.id, task, cancel, peer_gone });
 }

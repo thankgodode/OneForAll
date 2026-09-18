@@ -1,10 +1,14 @@
-use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, PeerInfo, HOST_PEER_ID};
-use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
+use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID};
+use crate::state::{ClientState, DeviceInfo, SessionState};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Called when the user clicks a discovered host, or connects to one
 /// entered manually. `my_listen_port` MUST come from an already-completed
@@ -75,6 +79,7 @@ pub async fn join_network(
                 // running or expose the raw socket.
                 let (read_half, mut write_half) = socket.into_split();
                 let (tx, mut rx) = mpsc::unbounded_channel();
+                let heartbeat_tx = tx.clone(); // cloned BEFORE the move below
                 *client.outbox.lock().unwrap() = Some(tx);
                 *client.my_peer_id.lock().unwrap() = Some(peer_id);
 
@@ -86,9 +91,25 @@ pub async fn join_network(
                     }
                 });
 
+                // Same heartbeat as the host side (see control.rs) —
+                // keeps the connection looking alive to a plain TCP read
+                // during idle periods, and detects the host silently
+                // vanishing (no FIN, no RST — cable pulled, laptop
+                // closed) within HEARTBEAT_TIMEOUT instead of hanging.
+                let heartbeat = tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+                    loop {
+                        ticker.tick().await;
+                        if heartbeat_tx.send(ControlMessage::Ping).is_err() { break; }
+                    }
+                });
+
                 let client_for_cleanup = client.inner().clone();
                 let session_for_updates = session.inner().clone();
-                tokio::spawn(listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates));
+                tokio::spawn(async move {
+                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates).await;
+                    heartbeat.abort();
+                });
 
                 return Ok(me);
             }
@@ -105,18 +126,29 @@ pub async fn join_network(
 /// already gone.
 async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>) {
     loop {
-        match recv_msg::<ControlMessage, _>(&mut read_half).await {
-            Ok(ControlMessage::PeerJoined(p)) => {
+        let received = tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await;
+        match received {
+            Ok(Ok(ControlMessage::PeerJoined(p))) => {
+                session.touch_peer(HOST_PEER_ID);
                 session.insert_peer_mirror(p.clone());
                 let _ = app.emit("peer-joined", p);
             }
-            Ok(ControlMessage::PeerLeft { peer_id }) => {
+            Ok(Ok(ControlMessage::PeerLeft { peer_id, reason })) => {
+                session.touch_peer(HOST_PEER_ID);
                 session.remove_peer(&peer_id);
-                let _ = app.emit("peer-left", peer_id);
+                let _ = app.emit("peer-left", (peer_id, reason));
             }
-            Ok(ControlMessage::Kick { reason }) => { let _ = app.emit("kicked", reason); break; }
-            Err(_) => { let _ = app.emit("disconnected-from-network", ()); break; }
-            _ => {}
+            Ok(Ok(ControlMessage::Kick { reason })) => { let _ = app.emit("kicked", reason); break; }
+            Ok(Ok(_)) => session.touch_peer(HOST_PEER_ID), // Ping, Pong, or anything else — any traffic counts as "still alive"
+            Ok(Err(_)) | Err(_) => {
+                // Same reasoning as the host side: a real error and a
+                // timeout both just mean "no orderly Leave arrived" — the
+                // host going silent (crash, network drop, no FIN/RST at
+                // all) is exactly the case DisconnectReason::TimedOut is
+                // for, distinct from the explicit Kick handled above.
+                let _ = app.emit("disconnected-from-network", DisconnectReason::TimedOut);
+                break;
+            }
         }
     }
     client.clear();
@@ -129,16 +161,10 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
 /// side: `ClientState` clears immediately rather than waiting for the
 /// host to acknowledge, since there's nothing meaningful to wait for.
 #[tauri::command]
-pub fn leave_network(client: State<'_, Arc<ClientState>>, tcp_state:State<'_,Arc<TcpState>>) {
+pub fn leave_network(client: State<'_, Arc<ClientState>>) {
     if let Some(tx) = client.outbox.lock().unwrap().take() {
         let _ = tx.send(ControlMessage::Leave);
     }
-    
-    let lock = tcp_state.active_transfers.lock().unwrap();
-    for (_, handle)  in &*lock{
-        handle.cancel.cancel();
-    }
-    
     *client.my_peer_id.lock().unwrap() = None;
 }
 
@@ -153,9 +179,13 @@ pub fn respond_to_join(session: State<'_, Arc<SessionState>>, request_id: String
 
 /// Host side: forcibly disconnects a joined peer. Pushing `Kick` down
 /// their outbox and letting them close their own end is enough — no need
-/// to reach into the socket from here.
+/// to reach into the socket from here. Marks `kicked` BEFORE sending, so
+/// that once the connection actually ends, `handle_control_connection`
+/// can report `DisconnectReason::Kicked` instead of it looking like an
+/// ordinary timeout.
 #[tauri::command]
 pub fn kick_peer(session: State<'_, Arc<SessionState>>, peer_id: String) {
+    session.mark_kicked(&peer_id);
     if let Some(peer) = session.peers.lock().unwrap().get(&peer_id) {
         if let Some(outbox) = &peer.outbox {
             let _ = outbox.send(ControlMessage::Kick { reason: "Removed by host".into() });

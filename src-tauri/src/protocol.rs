@@ -47,17 +47,25 @@ pub enum ConnectionKind {
     /// The receiver responds with exactly one `ResumeOffset` (via the
     /// same length-prefixed bincode framing as Control messages) before
     /// either side sends a single raw file byte — that response is what
-    /// tells the sender where in its local file to seek to.
+    /// tells the sender where in its local file to seek to. This is the
+    /// SENDER-initiated resume path — see `RequestResume` below for the
+    /// receiver-initiated equivalent.
     ResumeTransfer {
+        peer_id: String,
         transfer_id: String,
-        starting_sent: u64,
     },
-    // TriggerResend{
-    //     file_path: String,
-    //     transfer_id: String,
-    //     size: u64,
-    //     starting_sent: u64,
-    // }
+    /// The RECEIVER-initiated resume path — sent by whoever is missing
+    /// data, to whoever originally sent it. Unlike ResumeTransfer, the
+    /// offset travels WITH this message rather than in a reply that
+    /// follows it: the receiver already knows its own partial file's
+    /// real size before it ever connects, so there's nothing to ask for
+    /// — streaming can begin immediately once the sender validates the
+    /// request.
+    RequestResume {
+        peer_id: String,
+        transfer_id: String,
+        bytes_already_have: u64,
+    },
 }
 
 /// The receiver's answer to `ConnectionKind::ResumeTransfer` — how many
@@ -78,6 +86,20 @@ pub struct ResumeOffset {
 /// in `dispatch::handle_connection`.
 pub const HOST_PEER_ID: &str = "host";
 
+/// Why a peer's Control connection ended — this is what lets both sides
+/// give an honest, specific account instead of every disconnect looking
+/// like the same generic "gone" event. `Left` and `Kicked` are both
+/// orderly (someone chose this); `TimedOut` is the one that matters most
+/// for resumable transfers, since it's the only one where "unreachable"
+/// might just be temporary.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum DisconnectReason {
+    Left,     // sent an explicit Leave
+    Kicked,   // host sent Kick before this connection ended
+    TimedOut, // no traffic within HEARTBEAT_TIMEOUT, or the socket just died with no FIN/RST at all
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ControlMessage {
     JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16 },
@@ -85,7 +107,7 @@ pub enum ControlMessage {
     JoinAccepted { session_name: String, peer_id: String, host_device_name: String, roster: Vec<PeerInfo> },
     JoinRejected { reason: String },
     PeerJoined(PeerInfo),
-    PeerLeft { peer_id: String },
+    PeerLeft { peer_id: String, reason: DisconnectReason },
     Kick { reason: String },
     Leave,
     Ping,

@@ -1,11 +1,10 @@
 use crate::db::{Db, IncompleteTransfer};
 use crate::events::{TransferProgress, TransferStarted};
 use crate::network::TRANSFER_CHUNK_SIZE;
-use crate::network::receive::resume_incoming_transfer;
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, PeerInfo, ResumeOffset};
 use crate::state::{SessionState, TcpState, TransferHandle};
 use std::io::SeekFrom;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -105,11 +104,13 @@ async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, fi
         total_size: size,
         direction: "send".into(),
         created_at: now_unix(),
+        interrupted_at: None,
     });
 
     let cancel = CancellationToken::new();
-    let task = tokio::spawn(stream_from_disk(socket, (*file_path).clone(), transfer_id.clone(), size, 0, app.clone(), cancel.clone(), db.clone()));
-    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+    let peer_gone = CancellationToken::new();
+    let task = tokio::spawn(stream_from_disk(socket, (*file_path).clone(), transfer_id.clone(), size, 0, app.clone(), cancel.clone(), peer_gone.clone(), db.clone()));
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: target.id, task, cancel, peer_gone });
 }
 
 /// Reconnects to continue a transfer that was interrupted. Looked up by
@@ -128,23 +129,22 @@ pub async fn resume_transfer(
 ) -> Result<(), String> {
     let record = db.get_incomplete_transfer(&transfer_id).map_err(|e| e.to_string())?
         .ok_or("No record of this transfer")?;
-    if record.direction == "send" {
+    if record.direction != "send" {
         return Err("This transfer was incoming, not outgoing".into());
     }
 
-    let roster = session.roster();
-    let target = roster.iter().find(|p| p.device_name == record.peer_device_name).cloned()
+    let target = session.find_peer_by_device_name(&record.peer_device_name)
         .ok_or("That device isn't currently connected — rejoin the network first")?;
 
     let tcp_state = tcp_state.inner().clone();
     let db = db.inner().clone();
     tokio::spawn(async move {
-        resume_one_file(app, tcp_state, db, record, target).await;
+        resume_one_file(app, tcp_state, db, record, target, my_peer_id).await;
     });
     Ok(())
 }
 
-async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, record: IncompleteTransfer, target: PeerInfo) {
+async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, record: IncompleteTransfer, target: PeerInfo, my_peer_id: String) {
     let transfer_id = record.transfer_id.clone();
 
     let Ok(mut socket) = TcpStream::connect(&target.addr).await else {
@@ -152,30 +152,82 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
         return;
     };
 
-    let dest_path = PathBuf::from(&record.file_path);
-    let already_have = match tokio::fs::metadata(&dest_path).await {
-        Ok(meta) => meta.len(),
-        Err(_) => 0, // partial file is gone somehow — resume from scratch rather than fail outright
-    };
-    
     let sent_header = send_msg(&mut socket, &ConnectionKind::ResumeTransfer {
-        transfer_id: transfer_id.clone(), starting_sent:already_have, 
+        peer_id: my_peer_id, transfer_id: transfer_id.clone(),
     }).await;
-    
     if sent_header.is_err() {
         let _ = app.emit("transfer-failed", (&transfer_id, "Failed to reconnect"));
         return;
     }
 
-    let _ = app.emit("transfer-resumed", (&transfer_id, already_have));
+    let offset: ResumeOffset = match recv_msg(&mut socket).await {
+        Ok(o) => o,
+        Err(_) => {
+            let _ = app.emit("transfer-failed", (&transfer_id, "Host couldn't resume this transfer"));
+            return;
+        }
+    };
+
+    let _ = app.emit("transfer-resumed", (&transfer_id, offset.bytes_received));
 
     let cancel = CancellationToken::new();
-    let task = tokio::spawn(resume_incoming_transfer(socket, transfer_id.clone(), target, tcp_state.clone(), db, app,dest_path,already_have));
-
-    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { task, cancel });
+    let peer_gone = CancellationToken::new();
+    let task = tokio::spawn(stream_from_disk(
+        socket, record.file_path, transfer_id.clone(), record.total_size, offset.bytes_received, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(),
+    ));
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: target.id, task, cancel, peer_gone });
 }
 
-pub async fn stream_from_disk(
+/// The other half of resume — this side is entirely passive. Called from
+/// `dispatch::handle_connection` when a `ConnectionKind::RequestResume`
+/// arrives: some peer we originally SENT this file to is now asking us
+/// to continue from a byte offset THEY computed (their partial file's
+/// real size — see the matching request_resume command in receive.rs).
+/// No response needed before streaming begins; unlike sender-initiated
+/// resume, the offset already arrived as part of the connection itself.
+pub async fn serve_resume_request(
+    socket: TcpStream,
+    transfer_id: String,
+    bytes_already_have: u64,
+    from_peer: PeerInfo,
+    tcp_state: Arc<TcpState>,
+    db: Arc<Db>,
+    app: AppHandle,
+) {
+    let record = match db.get_incomplete_transfer(&transfer_id) {
+        Ok(Some(r)) => r,
+        _ => {
+            let _ = app.emit("transfer-failed", (&transfer_id, "No record of this transfer"));
+            return;
+        }
+    };
+    if record.direction != "send" {
+        let _ = app.emit("transfer-failed", (&transfer_id, "This wasn't a transfer we sent"));
+        return;
+    }
+    // Same identity check as ResumeTransfer, just from the sender's side
+    // this time — device_name, not peer_id, for the reasons noted
+    // throughout (a reconnected peer gets a fresh peer_id every join).
+    if record.peer_device_name != from_peer.device_name {
+        let _ = app.emit("transfer-failed", (&transfer_id, "This transfer belongs to a different device"));
+        return;
+    }
+    if bytes_already_have > record.total_size {
+        let _ = app.emit("transfer-failed", (&transfer_id, "Resume offset is larger than the file itself"));
+        return;
+    }
+
+    let _ = app.emit("transfer-resumed", (&transfer_id, bytes_already_have));
+
+    let cancel = CancellationToken::new();
+    let peer_gone = CancellationToken::new();
+    let task = tokio::spawn(stream_from_disk(
+        socket, record.file_path, transfer_id.clone(), record.total_size, bytes_already_have, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(),
+    ));
+    tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: from_peer.id, task, cancel, peer_gone });
+}
+
+async fn stream_from_disk(
     mut socket: TcpStream,
     file_path: String,
     transfer_id: String,
@@ -183,6 +235,7 @@ pub async fn stream_from_disk(
     starting_sent: u64,
     app: AppHandle,
     cancel: CancellationToken,
+    peer_gone: CancellationToken,
     db: Arc<Db>,
 ) {
     let Ok(mut file) = File::open(&file_path).await else {
@@ -207,6 +260,12 @@ pub async fn stream_from_disk(
                 biased;
                 _ = cancel.cancelled() => {
                     return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
+                }
+                _ = peer_gone.cancelled() => {
+                    // Different ErrorKind than the explicit cancel above,
+                    // but the same catch-all handling below — the peer
+                    // leaving the session is "interrupted," not "abandoned."
+                    return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "peer left the session"));
                 }
                 n = file.read(&mut buf) => n?,
             };
@@ -239,8 +298,10 @@ pub async fn stream_from_disk(
             let _ = app.emit("transfer-cancelled", &transfer_id);
         }
         _ => {
-            // Connection lost, not explicitly cancelled — kept resumable
-            // on purpose; see the matching note in receive.rs.
+            // Covers both an ordinary connection-lost failure AND the
+            // peer_gone case above — kept resumable on purpose; see the
+            // matching note in receive.rs.
+            let _ = db.mark_transfer_interrupted(&transfer_id, now_unix());
             let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
         }
     }
