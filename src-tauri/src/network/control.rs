@@ -72,6 +72,7 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
 
     let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel();
     let heartbeat_tx = outbox_tx.clone(); // cloned BEFORE the move below — see the ticker task further down
+    let reply_tx = outbox_tx.clone(); // cloned for the SAME reason — see the Ping arm in the read loop below
     session.insert_peer(info.clone(), Some(outbox_tx));
 
     // Extracted into a local BEFORE the `.await` below on purpose: a
@@ -129,7 +130,19 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     let disconnect_reason = loop {
         match tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await {
             Ok(Ok(ControlMessage::Leave)) => break DisconnectReason::Left,
-            Ok(Ok(_)) => session.touch_peer(&info.id), // Ping, Pong, or anything else — any traffic at all counts as "still alive"
+            Ok(Ok(ControlMessage::Ping)) => {
+                // Reply immediately, on the SAME outbox the periodic
+                // heartbeat task already writes through — this is what
+                // makes Pong an actual acknowledgment of a specific Ping
+                // rather than the dead, never-constructed variant it was
+                // before. Not load-bearing for liveness detection itself
+                // (any traffic already counts, via touch_peer below), but
+                // it's what an RTT measurement or a stricter "did they
+                // specifically ack" check would hook into later.
+                session.touch_peer(&info.id);
+                let _ = reply_tx.send(ControlMessage::Pong);
+            }
+            Ok(Ok(_)) => session.touch_peer(&info.id), // Pong, or anything else — any traffic at all counts as "still alive"
             Ok(Err(_)) | Err(_) => {
                 // A real error or a timeout both mean the same thing here:
                 // no orderly Leave arrived. The only way to tell "the host

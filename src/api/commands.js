@@ -56,6 +56,8 @@ export const sendFileToPeers = (myPeerId, filePath, targetPeerIds) =>
 export const respondToIncomingFile = (transferId, accept) =>
   invoke("respond_to_incoming_file", { transferId, accept });
 export const cancelTransfer = (transferId) => invoke("cancel_transfer", { transferId });
+export const removeIncomplete = (transferId) => invoke("remove_incomplete_files", { transferId});
+
 
 // --- resumable transfers ---
 // listIncompleteTransfers() covers BOTH still-running-app reconnects AND

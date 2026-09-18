@@ -80,6 +80,7 @@ pub async fn join_network(
                 let (read_half, mut write_half) = socket.into_split();
                 let (tx, mut rx) = mpsc::unbounded_channel();
                 let heartbeat_tx = tx.clone(); // cloned BEFORE the move below
+                let reply_tx = tx.clone(); // cloned for the SAME reason — see the Ping arm in listen_for_roster_updates
                 *client.outbox.lock().unwrap() = Some(tx);
                 *client.my_peer_id.lock().unwrap() = Some(peer_id);
 
@@ -107,7 +108,7 @@ pub async fn join_network(
                 let client_for_cleanup = client.inner().clone();
                 let session_for_updates = session.inner().clone();
                 tokio::spawn(async move {
-                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates).await;
+                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates, reply_tx).await;
                     heartbeat.abort();
                 });
 
@@ -124,7 +125,7 @@ pub async fn join_network(
 /// sync as peers come and go, and clears `ClientState` on exit so
 /// `leave_network` doesn't try to send through a connection that's
 /// already gone.
-async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>) {
+async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>, reply_tx: mpsc::UnboundedSender<ControlMessage>) {
     loop {
         let received = tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await;
         match received {
@@ -139,7 +140,15 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
                 let _ = app.emit("peer-left", (peer_id, reason));
             }
             Ok(Ok(ControlMessage::Kick { reason })) => { let _ = app.emit("kicked", reason); break; }
-            Ok(Ok(_)) => session.touch_peer(HOST_PEER_ID), // Ping, Pong, or anything else — any traffic counts as "still alive"
+            Ok(Ok(ControlMessage::Ping)) => {
+                // Same as the host side — reply on the same outbox the
+                // periodic heartbeat task already writes through, making
+                // Pong an actual acknowledgment rather than a variant
+                // that's declared but never sent.
+                session.touch_peer(HOST_PEER_ID);
+                let _ = reply_tx.send(ControlMessage::Pong);
+            }
+            Ok(Ok(_)) => session.touch_peer(HOST_PEER_ID), // Pong, or anything else — any traffic counts as "still alive"
             Ok(Err(_)) | Err(_) => {
                 // Same reasoning as the host side: a real error and a
                 // timeout both just mean "no orderly Leave arrived" — the

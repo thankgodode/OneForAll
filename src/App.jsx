@@ -356,6 +356,10 @@ export default function App() {
       return;
     }
     if (action === "remove") {
+      api.removeIncomplete(id).catch((e) => { 
+        console.log("Error: ", e); 
+        toast("Failed to remove incomplete file", true) 
+      })
       setTransfers((prev) => prev.filter((t) => t.id !== id));
       return;
     }
@@ -512,7 +516,7 @@ export default function App() {
   return (
     <div className="lan-app">
       <GlobalStyle />
-      <TitleBar title="Nearby" />
+      {/* <TitleBar title="Nearby" /> */}
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <Sidebar view={view} setView={setView} profile={profile} network={network} />

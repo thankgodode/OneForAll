@@ -12,6 +12,18 @@ export default function GlobalStyle() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
+      html, 
+      body { 
+        margin: 0; 
+        padding: 0; 
+        width: 100%; 
+        height: 100%; 
+      }                
+                        
+      #root { 
+        width: 100%; 
+        height: 100%; 
+      }   
       .lan-app {
         --bg: #0C1113;
         --bg-elevated: #12181B;
@@ -32,9 +44,6 @@ export default function GlobalStyle() {
         --red: #E8636B;
         --red-dim: #4A1F22;
         --gray: #5D6E71;
-        --radius-sm: 5px;
-        --radius-md: 7px;
-        --radius-lg: 9px;
         font-family: 'Inter', sans-serif;
         background: var(--bg);
         color: var(--text-primary);
@@ -43,7 +52,6 @@ export default function GlobalStyle() {
         flex-direction: column;
         position: relative;
         overflow: hidden;
-        border-radius: 10px;
         box-shadow: 0 0 0 1px var(--border), 0 24px 60px rgba(0,0,0,0.45);
         font-size: 13px;
       }
