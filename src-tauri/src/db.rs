@@ -164,10 +164,10 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT transfer_id, peer_display_name, peer_device_name, filename, file_path, total_size, direction, created_at, interrupted_at
-            FROM incomplete_transfers ORDER BY created_at DESC"
+             FROM incomplete_transfers ORDER BY created_at DESC"
         )?;
         let x = stmt.query_map([], Self::row_to_transfer)?.collect();
-        // stmt.query_map([], Self::row_to_transfer)?.collect()
+
         x
     }
 

@@ -84,6 +84,7 @@ pub fn run() {
             network::receive::list_incomplete_transfers,
             network::receive::request_resume,
             network::transfers::cancel_transfer,
+            network::transfers::remove_incomplete_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
