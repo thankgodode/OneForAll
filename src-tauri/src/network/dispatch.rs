@@ -5,6 +5,7 @@ use crate::network::{
     send::serve_resume_request,
 };
 use crate::protocol::{recv_msg, ConnectionKind};
+use crate::state::TransferHandle;
 use std::net::SocketAddr;
 use tauri::AppHandle;
 use tokio::net::TcpStream;

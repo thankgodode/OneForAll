@@ -9,8 +9,14 @@
 //!    after their `ConnectionKind` frame — no further framing needed since
 //!    the size is already known from it.
 
+use std::{net::TcpStream, sync::Arc};
+
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
+
+use crate::{db::Db, state::TcpState};
 
 // `rename_all = "camelCase"` on every struct that crosses the JS boundary
 // (this one, and everything in events.rs) is deliberate and load-bearing:
