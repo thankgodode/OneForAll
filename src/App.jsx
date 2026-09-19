@@ -212,6 +212,7 @@ export default function App() {
         },
         onPeerLeft: (peerId, reason) => {
           setRoster((prev) => {
+            console.log("INFO: ", prev);
             const peer = prev.find((p) => p.id === peerId);
             // Reason-aware messaging is the whole point of the backend
             // change: "left" is routine and doesn't need a toast at all;
@@ -381,7 +382,8 @@ export default function App() {
       // command errors cleanly ("No record of this transfer") if
       // there's nothing to continue, e.g. a send that never actually
       // connected in the first place.
-      const resume = t?.direction === "receive" ? api.requestResume : api.resumeTransfer;
+      // const resume = t?.direction === "receive" ? api.requestResume : api.resumeTransfer;
+      const resume = api.requestResume;
       resume(network.myPeerId, id).catch((e) => toast(`Couldn't resume: ${e}`, true));
       return;
     }

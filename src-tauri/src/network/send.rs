@@ -129,8 +129,8 @@ pub async fn resume_transfer(
 ) -> Result<(), String> {
     let record = db.get_incomplete_transfer(&transfer_id).map_err(|e| e.to_string())?
         .ok_or("No record of this transfer")?;
-    if record.direction != "send" {
-        return Err("This transfer was incoming, not outgoing".into());
+    if record.direction == "send" {
+        return Err("This transfer was outgoing, not incoming".into());
     }
 
     let target = session.find_peer_by_device_name(&record.peer_device_name)
@@ -272,7 +272,6 @@ async fn stream_from_disk(
             if n == 0 { break; }
             socket.write_all(&buf[..n]).await?;
             sent += n as u64;
-            println!("Buffer: {:?} ", buf);
 
             if last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL || sent >= size {
                 let elapsed = start.elapsed().as_secs_f64().max(0.001);
@@ -296,12 +295,10 @@ async fn stream_from_disk(
         }
         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
             // Explicit user cancel — true abandonment.
-            println!("Network interruption");
             let _ = db.remove_incomplete_transfer(&transfer_id);
             let _ = app.emit("transfer-cancelled", &transfer_id);
         }
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut =>{
-            println!("Peer disconnected :(");
             let _ = app.emit("transfer-cancelled", &transfer_id);
             let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
         }

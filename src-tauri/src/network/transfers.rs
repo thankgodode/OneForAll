@@ -14,6 +14,5 @@ pub fn cancel_transfer(tcp_state: State<'_, Arc<TcpState>>, transfer_id: String)
 
 #[tauri::command]
 pub fn remove_incomplete_files(transfer_id:&str,db:State<'_,Arc<Db>>){
-    println!("Transfer id: {}", transfer_id);
     db.inner().remove_incomplete_transfer(&transfer_id).unwrap();
 }

@@ -17,7 +17,7 @@ pub async fn browse_service(app: AppHandle, state: State<'_, Arc<MdnsState>>) ->
             match event {
                 ServiceEvent::ServiceResolved(info) => {
                     let addr = info
-                        .get_addresses()
+                        .get_addresses_v4()
                         .iter()
                         .next()
                         .map(|ip| format!("{}:{}", ip, info.get_port()));
