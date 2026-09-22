@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 /// network silently deletes any in-flight transfer with them, which
 /// defeats the resume feature for exactly the scenario it's meant to
 /// handle.
+#[derive(Debug)]
 pub struct TransferHandle {
     pub peer_id: String,
     pub task: JoinHandle<()>,

@@ -129,7 +129,9 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // `seconds_since_seen` for anyone querying this peer's liveness.
     let disconnect_reason = loop {
         match tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await {
-            Ok(Ok(ControlMessage::Leave)) => break DisconnectReason::Left,
+            Ok(Ok(ControlMessage::Leave)) => {
+                break DisconnectReason::Left
+            },
             Ok(Ok(ControlMessage::Ping)) => {
                 // Reply immediately, on the SAME outbox the periodic
                 // heartbeat task already writes through — this is what

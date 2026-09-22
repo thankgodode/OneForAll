@@ -212,13 +212,12 @@ export default function App() {
         },
         onPeerLeft: (peerId, reason) => {
           setRoster((prev) => {
-            console.log("INFO: ", prev);
             const peer = prev.find((p) => p.id === peerId);
             // Reason-aware messaging is the whole point of the backend
             // change: "left" is routine and doesn't need a toast at all;
             // "timedOut" is the one worth flagging, since it's the only
             // case where "gone" might just be temporary.
-            if (peer && reason === "timedOut") toast(`Lost connection to ${peer.name}`, true);
+            if (peer && reason === "timedOut") toast(`Lost connection to ${peer.displayName}`, true);
             return prev.filter((p) => p.id !== peerId);
           });
         },
