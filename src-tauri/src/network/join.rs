@@ -1,5 +1,5 @@
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID};
-use crate::state::{ClientState, DeviceInfo, SessionState};
+use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -24,6 +24,7 @@ pub async fn join_network(
     host_addr: String,
     display_name: String,
     my_listen_port: u16,
+    tcp_state: State<'_, Arc<TcpState>>,
 ) -> Result<PeerInfo, String> {
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ConnectionKind::Control).await.map_err(|e| e.to_string())?;
@@ -82,7 +83,7 @@ pub async fn join_network(
                 let heartbeat_tx = tx.clone(); // cloned BEFORE the move below
                 let reply_tx = tx.clone(); // cloned for the SAME reason — see the Ping arm in listen_for_roster_updates
                 *client.outbox.lock().unwrap() = Some(tx);
-                *client.my_peer_id.lock().unwrap() = Some(peer_id);
+                *client.my_peer_id.lock().unwrap() = Some(peer_id.clone());
 
                 tokio::spawn(async move {
                     while let Some(msg) = rx.recv().await {
@@ -107,8 +108,9 @@ pub async fn join_network(
 
                 let client_for_cleanup = client.inner().clone();
                 let session_for_updates = session.inner().clone();
+                let tcp = tcp_state.inner().clone();
                 tokio::spawn(async move {
-                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates, reply_tx).await;
+                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates, reply_tx,tcp).await;
                     heartbeat.abort();
                 });
 
@@ -125,7 +127,7 @@ pub async fn join_network(
 /// sync as peers come and go, and clears `ClientState` on exit so
 /// `leave_network` doesn't try to send through a connection that's
 /// already gone.
-async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>, reply_tx: mpsc::UnboundedSender<ControlMessage>) {
+async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>, reply_tx: mpsc::UnboundedSender<ControlMessage>,tcp:Arc<TcpState>) {
     loop {
         let received = tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await;
         match received {
@@ -160,6 +162,8 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
             }
         }
     }
+
+    tcp.stop_all_transfers();
     client.clear();
     session.clear_all_peers();
 }
