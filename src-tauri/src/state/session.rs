@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
+use crate::printing::printer::{PrinterInfo};
+
 /// A peer this device considers a member of the current session.
 /// `outbox` is only `Some` when this device is the one that ACCEPTED
 /// this peer's join — i.e. this device is acting as host for that
@@ -22,6 +24,7 @@ use tokio::sync::{mpsc::UnboundedSender, oneshot};
 pub struct PeerHandle {
     pub info: PeerInfo,
     pub outbox: Option<UnboundedSender<ControlMessage>>,
+    pub printers: Mutex<Vec<PrinterInfo>>,
     pub last_seen: Mutex<Instant>,
     pub kicked: AtomicBool,
 }
@@ -77,6 +80,7 @@ impl SessionState {
 
     pub fn insert_peer(&self, info: PeerInfo, outbox: Option<UnboundedSender<ControlMessage>>) {
         self.peers.lock().unwrap().insert(info.id.clone(), PeerHandle {
+            printers: Mutex::new(Vec::new()),
             info, outbox, last_seen: Mutex::new(Instant::now()), kicked: AtomicBool::new(false),
         });
     }
@@ -145,6 +149,60 @@ impl SessionState {
 
     pub fn was_kicked(&self, peer_id: &str) -> bool {
         self.peers.lock().unwrap().get(peer_id).map(|p| p.kicked.load(Ordering::Relaxed)).unwrap_or(false)
+    }
+
+    pub fn set_peer_printers(
+        &self,
+        peer_id: &str,
+        printers: Vec<PrinterInfo>,
+    ) {
+        if let Some(peer) = self.peers.lock().unwrap().get(peer_id) {
+            *peer.printers.lock().unwrap() = printers;
+        }
+    }
+
+    pub fn peer_printers(
+        &self,
+        peer_id: &str,
+    ) -> Option<Vec<PrinterInfo>> {
+        self.peers
+            .lock()
+            .unwrap()
+            .get(peer_id)
+            .map(|peer| peer.printers.lock().unwrap().clone())
+    }
+
+    pub fn find_printer_owner(
+        &self,
+        printer_id: &str,
+    ) -> Option<(PeerInfo, PrinterInfo)> {
+        let peers = self.peers.lock().unwrap();
+
+        for peer in peers.values() {
+            let printers = peer.printers.lock().unwrap();
+
+            if let Some(printer) = printers.iter().find(|p| p.id == printer_id) {
+                return Some((peer.info.clone(), printer.clone()));
+            }
+        }
+
+        None
+    }
+
+    pub fn broadcast_except(
+        &self,
+        except_peer_id: &str,
+        msg: ControlMessage,
+    ) {
+        for (peer_id, peer) in self.peers.lock().unwrap().iter() {
+            if peer_id == except_peer_id {
+                continue;
+            }
+
+            if let Some(outbox) = &peer.outbox {
+                let _ = outbox.send(msg.clone());
+            }
+        }
     }
 }
 

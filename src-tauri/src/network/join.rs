@@ -1,5 +1,6 @@
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID};
 use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
+use crate::printing::printer;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -80,6 +81,14 @@ pub async fn join_network(
                 // running or expose the raw socket.
                 let (read_half, mut write_half) = socket.into_split();
                 let (tx, mut rx) = mpsc::unbounded_channel();
+
+                let local_printers = printer::list_local_printers();
+
+                let _ = tx.send(ControlMessage::PrinterList {
+                    peer_id: peer_id.clone(),
+                    printers: local_printers,
+                });
+
                 let heartbeat_tx = tx.clone(); // cloned BEFORE the move below
                 let reply_tx = tx.clone(); // cloned for the SAME reason — see the Ping arm in listen_for_roster_updates
                 *client.outbox.lock().unwrap() = Some(tx);
@@ -149,6 +158,18 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
                 // that's declared but never sent.
                 session.touch_peer(HOST_PEER_ID);
                 let _ = reply_tx.send(ControlMessage::Pong);
+            }
+            Ok(Ok(ControlMessage::PrinterList{peer_id,printers}))=> {
+                session.set_peer_printers(&peer_id, printers.clone());
+                let id = peer_id.clone();
+
+                session.broadcast_except(
+                    &peer_id,
+                    ControlMessage::PrinterList {
+                        peer_id: id,
+                        printers,
+                    },
+                );
             }
             Ok(Ok(_)) => session.touch_peer(HOST_PEER_ID), // Pong, or anything else — any traffic counts as "still alive"
             Ok(Err(_)) | Err(_) => {

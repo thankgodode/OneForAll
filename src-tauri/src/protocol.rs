@@ -17,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 use crate::{db::Db, state::TcpState};
+use crate::printing::printer::PrinterInfo;
 
 // `rename_all = "camelCase"` on every struct that crosses the JS boundary
 // (this one, and everything in events.rs) is deliberate and load-bearing:
@@ -118,6 +119,10 @@ pub enum ControlMessage {
     Leave,
     Ping,
     Pong,
+    PrinterList {
+        peer_id: String,
+        printers: Vec<PrinterInfo>,
+    },
 }
 
 const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
