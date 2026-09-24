@@ -75,6 +75,34 @@ pub enum ConnectionKind {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintRequest {
+    pub job_id: String,
+    pub printer_id: String,
+    pub filename: String,
+    pub copies: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrintResponse {
+    Accepted {
+        job_id: String,
+    },
+    Rejected {
+        job_id: String,
+        reason: String,
+    },
+    Completed {
+        job_id: String,
+    },
+    Failed {
+        job_id: String,
+        reason: String,
+    },
+}
+
 /// The receiver's answer to `ConnectionKind::ResumeTransfer` — how many
 /// bytes it already has on disk. Deliberately derived from the partial
 /// file's ACTUAL size on disk (`fs::metadata`) at the moment this is
@@ -123,6 +151,8 @@ pub enum ControlMessage {
         peer_id: String,
         printers: Vec<PrinterInfo>,
     },
+    PrintRequest(PrintRequest),
+    PrintResponse(PrintResponse),
 }
 
 const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;

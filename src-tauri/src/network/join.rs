@@ -83,12 +83,12 @@ pub async fn join_network(
                 let (tx, mut rx) = mpsc::unbounded_channel();
 
                 let local_printers = printer::list_local_printers();
-
+                
                 let _ = tx.send(ControlMessage::PrinterList {
                     peer_id: peer_id.clone(),
-                    printers: local_printers,
+                    printers: local_printers.clone(),
                 });
-
+                
                 let heartbeat_tx = tx.clone(); // cloned BEFORE the move below
                 let reply_tx = tx.clone(); // cloned for the SAME reason — see the Ping arm in listen_for_roster_updates
                 *client.outbox.lock().unwrap() = Some(tx);
@@ -96,6 +96,7 @@ pub async fn join_network(
 
                 tokio::spawn(async move {
                     while let Some(msg) = rx.recv().await {
+                        println!("Received: {:?}", msg);
                         if send_msg(&mut write_half, &msg).await.is_err() {
                             break;
                         }
@@ -159,17 +160,20 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
                 session.touch_peer(HOST_PEER_ID);
                 let _ = reply_tx.send(ControlMessage::Pong);
             }
-            Ok(Ok(ControlMessage::PrinterList{peer_id,printers}))=> {
-                session.set_peer_printers(&peer_id, printers.clone());
-                let id = peer_id.clone();
+            Ok(Ok(ControlMessage::PrinterList {
+                peer_id,
+                printers,
+            })) => {
+                session.touch_peer(HOST_PEER_ID);
 
-                session.broadcast_except(
-                    &peer_id,
-                    ControlMessage::PrinterList {
-                        peer_id: id,
-                        printers,
-                    },
+                session.set_peer_printers(&peer_id, printers.clone());
+
+                let _ = app.emit(
+                    "printers-updated",
+                    (peer_id, printers),
                 );
+
+                println!("Printer list arm");
             }
             Ok(Ok(_)) => session.touch_peer(HOST_PEER_ID), // Pong, or anything else — any traffic counts as "still alive"
             Ok(Err(_)) | Err(_) => {
