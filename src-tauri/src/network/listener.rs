@@ -1,6 +1,7 @@
 use crate::context::AppContext;
 use crate::db::Db;
 use crate::network::dispatch::handle_connection;
+use crate::printing::printer::get_local_printers;
 use crate::state::{AppSettings, DeviceInfo, PendingIncoming, SessionState, TcpState};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
@@ -65,5 +66,9 @@ pub async fn start_listening(
         device: device_state.inner().clone(),
         db: db_state.inner().clone(),
     };
+
+    let local_printers = get_local_printers();
+
+    println!("Printers: {:?}", local_printers);
     bind_and_serve(ctx, app).await
 }

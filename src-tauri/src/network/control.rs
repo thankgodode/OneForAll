@@ -1,3 +1,4 @@
+use crate::printing::printer;
 use crate::protocol::{recv_msg, send_msg, ControlMessage, DisconnectReason, PeerInfo};
 use crate::state::{DeviceInfo, PendingJoin, SessionState, TcpState};
 use std::net::SocketAddr;
@@ -27,7 +28,9 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         Err(_) => return,
     };
 
-    let ControlMessage::JoinRequest { display_name, device_name, code, listen_port } = msg else {
+    let local_printers = printer::list_local_printers();
+
+    let ControlMessage::JoinRequest { display_name, device_name, code, listen_port , printers} = msg else {
         return; // first message on a Control connection must be a join request
     };
 
@@ -73,8 +76,9 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel();
     let heartbeat_tx = outbox_tx.clone(); // cloned BEFORE the move below — see the ticker task further down
     let reply_tx = outbox_tx.clone(); // cloned for the SAME reason — see the Ping arm in the read loop below
-    session.insert_peer(info.clone(), Some(outbox_tx));
+    session.insert_peer(info.clone(), Some(outbox_tx), printers.clone());
 
+    println!("Joined peer printer: {:?}", printers);
     // Extracted into a local BEFORE the `.await` below on purpose: a
     // `MutexGuard` built inline inside an awaited call's arguments lives
     // until the end of the whole statement (not just the `.clone()`),
@@ -90,6 +94,7 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         peer_id: info.id.clone(),
         host_device_name: device.name.clone(),
         roster,
+        printers: local_printers
     }).await;
 
     let _ = app.emit("peer-joined", &info);
