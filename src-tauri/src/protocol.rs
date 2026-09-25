@@ -73,6 +73,11 @@ pub enum ConnectionKind {
         transfer_id: String,
         bytes_already_have: u64,
     },
+    // PrinterInfo{
+    //     id: String,
+    //     name: String,
+    //     is_default: bool,
+    // }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,9 +142,9 @@ pub enum DisconnectReason {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ControlMessage {
-    JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16 },
+    JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16, printers: Vec<PrinterInfo> },
     JoinPending,
-    JoinAccepted { session_name: String, peer_id: String, host_device_name: String, roster: Vec<PeerInfo> },
+    JoinAccepted { session_name: String, peer_id: String, host_device_name: String, roster: Vec<PeerInfo>, printers:Vec<PrinterInfo>},
     JoinRejected { reason: String },
     PeerJoined(PeerInfo),
     PeerLeft { peer_id: String, reason: DisconnectReason },

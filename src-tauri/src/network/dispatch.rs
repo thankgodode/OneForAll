@@ -54,5 +54,9 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
             let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
             serve_resume_request(socket, transfer_id, bytes_already_have, from_peer, ctx.tcp, ctx.db, app).await;
         }
+        // ConnectionKind::PrinterInfo{ id,name, is_default } =>{
+
+        // }
+
     }
 }

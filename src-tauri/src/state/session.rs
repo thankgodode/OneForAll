@@ -78,7 +78,7 @@ impl SessionState {
         self.peers.lock().unwrap().values().map(|p| &p.info).find(|p| p.device_name == device_name).cloned()
     }
 
-    pub fn insert_peer(&self, info: PeerInfo, outbox: Option<UnboundedSender<ControlMessage>>) {
+    pub fn insert_peer(&self, info: PeerInfo, outbox: Option<UnboundedSender<ControlMessage>>, printers:Vec<PrinterInfo>) {
         self.peers.lock().unwrap().insert(info.id.clone(), PeerHandle {
             printers: Mutex::new(Vec::new()),
             info, outbox, last_seen: Mutex::new(Instant::now()), kicked: AtomicBool::new(false),
@@ -87,8 +87,8 @@ impl SessionState {
 
     /// Convenience for the mirrored-roster case described on `PeerHandle`
     /// — used by a joined client, never by a host accepting a real join.
-    pub fn insert_peer_mirror(&self, info: PeerInfo) {
-        self.insert_peer(info, None);
+    pub fn insert_peer_mirror(&self, info: PeerInfo, printers:Vec<PrinterInfo>) {
+        self.insert_peer(info, None,printers);
     }
 
     pub fn remove_peer(&self, peer_id: &str) {

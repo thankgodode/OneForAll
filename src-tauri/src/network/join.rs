@@ -1,6 +1,6 @@
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID};
 use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
-use crate::printing::printer;
+use crate::printing::printer::{self, PrinterInfo};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -28,12 +28,15 @@ pub async fn join_network(
     tcp_state: State<'_, Arc<TcpState>>,
 ) -> Result<PeerInfo, String> {
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
+    let local_printers = printer::list_local_printers();
+
     send_msg(&mut socket, &ConnectionKind::Control).await.map_err(|e| e.to_string())?;
     send_msg(&mut socket, &ControlMessage::JoinRequest {
         display_name,
         device_name: device.name.clone(),
         code: None,
         listen_port: my_listen_port,
+        printers: local_printers.clone()
     }).await.map_err(|e| e.to_string())?;
 
     loop {
@@ -41,13 +44,15 @@ pub async fn join_network(
             Ok(ControlMessage::JoinPending) => {
                 let _ = app.emit("join-pending", ());
             }
-            Ok(ControlMessage::JoinAccepted { session_name, peer_id, host_device_name, roster }) => {
+            Ok(ControlMessage::JoinAccepted { session_name, peer_id, host_device_name, roster ,printers}) => {
                 let host_info = PeerInfo {
                     id: HOST_PEER_ID.into(),
                     display_name: "Host".into(),
                     device_name: host_device_name,
                     addr: host_addr.clone(),
                 };
+
+                println!("Host's printer: {:?}", printers.clone());
                 // The frontend gets the host's real info here — this is
                 // the only point in the whole flow where it does. Without
                 // it, a joined client's device list would show every
@@ -68,9 +73,9 @@ pub async fn join_network(
                 // the same way here as it does on the host — including
                 // the host itself under HOST_PEER_ID, since the host
                 // never goes through JoinRequest to get a "real" id.
-                session.insert_peer_mirror(host_info);
+                session.insert_peer_mirror(host_info,printers.clone());
                 for peer in &roster {
-                    session.insert_peer_mirror(peer.clone());
+                    session.insert_peer_mirror(peer.clone(),printers.clone());
                 }
 
                 // Split so the connection can be read from (roster updates)
@@ -82,12 +87,11 @@ pub async fn join_network(
                 let (read_half, mut write_half) = socket.into_split();
                 let (tx, mut rx) = mpsc::unbounded_channel();
 
-                let local_printers = printer::list_local_printers();
                 
-                let _ = tx.send(ControlMessage::PrinterList {
-                    peer_id: peer_id.clone(),
-                    printers: local_printers.clone(),
-                });
+                // let _ = tx.send(ControlMessage::PrinterList {
+                //     peer_id: peer_id.clone(),
+                //     printers: local_printers.clone(),
+                // });
                 
                 let heartbeat_tx = tx.clone(); // cloned BEFORE the move below
                 let reply_tx = tx.clone(); // cloned for the SAME reason — see the Ping arm in listen_for_roster_updates
@@ -115,11 +119,13 @@ pub async fn join_network(
                     }
                 });
 
+                let local_printers = printer::list_local_printers();
+
                 let client_for_cleanup = client.inner().clone();
                 let session_for_updates = session.inner().clone();
                 let tcp = tcp_state.inner().clone();
                 tokio::spawn(async move {
-                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates, reply_tx,tcp).await;
+                    listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates, reply_tx,tcp,local_printers.clone()).await;
                     heartbeat.abort();
                 });
 
@@ -136,13 +142,13 @@ pub async fn join_network(
 /// sync as peers come and go, and clears `ClientState` on exit so
 /// `leave_network` doesn't try to send through a connection that's
 /// already gone.
-async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>, reply_tx: mpsc::UnboundedSender<ControlMessage>,tcp:Arc<TcpState>) {
+async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>, reply_tx: mpsc::UnboundedSender<ControlMessage>,tcp:Arc<TcpState>,printers:Vec<PrinterInfo>) {
     loop {
         let received = tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await;
         match received {
             Ok(Ok(ControlMessage::PeerJoined(p))) => {
                 session.touch_peer(HOST_PEER_ID);
-                session.insert_peer_mirror(p.clone());
+                session.insert_peer_mirror(p.clone(),printers.clone());
                 let _ = app.emit("peer-joined", p);
             }
             Ok(Ok(ControlMessage::PeerLeft { peer_id, reason })) => {
