@@ -96,7 +96,6 @@ pub async fn join_network(
 
                 tokio::spawn(async move {
                     while let Some(msg) = rx.recv().await {
-                        println!("Received: {:?}", msg);
                         if send_msg(&mut write_half, &msg).await.is_err() {
                             break;
                         }
