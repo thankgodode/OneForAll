@@ -4,6 +4,7 @@ mod events;
 mod mdns;
 mod network;
 mod protocol;
+mod printer;
 mod state;
 mod util;
 mod printing;
@@ -55,6 +56,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // device
             state::device::get_device_name,
+            state::device::get_printers,
             // settings
             state::settings::get_settings,
             state::settings::set_display_name,
@@ -81,6 +83,7 @@ pub fn run() {
             network::join::kick_peer,
             // transfers
             network::send::send_file_to_peers,
+            network::send::send_print_job,
             network::send::resume_transfer,
             network::receive::respond_to_incoming_file,
             network::receive::list_incomplete_transfers,

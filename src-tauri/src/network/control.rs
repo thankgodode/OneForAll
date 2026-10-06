@@ -40,7 +40,7 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // nothing is listening on it. The IP is still trustworthy (it's
     // where the bytes actually came from); only the port needs replacing.
     let dialable_addr = format!("{}:{}", addr.ip(), listen_port);
-    let info = PeerInfo { id: request_id.clone(), display_name, device_name, addr: dialable_addr };
+    let info = PeerInfo { id: request_id.clone(), display_name, device_name, addr: dialable_addr, printers };
 
     let auto_accept = *session.auto_accept.lock().unwrap();
     let admitted = if auto_accept || session.code_matches(&code) {
@@ -93,6 +93,7 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         session_name,
         peer_id: info.id.clone(),
         host_device_name: device.name.clone(),
+        host_printers: device.printers.clone(),
         roster,
         printers: local_printers
     }).await;

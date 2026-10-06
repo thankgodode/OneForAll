@@ -31,9 +31,10 @@ pub async fn receive_incoming_transfer(
     pending_incoming: Arc<PendingIncoming>,
     tcp_state: Arc<TcpState>,
     db: Arc<Db>,
+    printer_name: Option<String>,
     app: AppHandle,
 ) {
-    if settings.require_confirmation() {
+    if settings.require_confirmation() || printer_name.is_some() {
         let (tx, rx) = oneshot::channel();
         pending_incoming.requests.lock().unwrap().insert(transfer_id.clone(), tx);
         let _ = app.emit("incoming-file-request", IncomingFileRequest {
@@ -41,11 +42,15 @@ pub async fn receive_incoming_transfer(
             filename: filename.clone(),
             size,
             from: from_peer.clone(), // cloned — still needed below for transfer-started
+            printer_name: printer_name.clone(),
         });
 
         match rx.await {
             Ok(true) => {}
             _ => {
+                if printer_name.is_some() {
+                    let _ = crate::protocol::send_msg(&mut socket, &false).await;
+                }
                 let _ = app.emit("transfer-rejected", &transfer_id);
                 return; // socket drops here; sender sees the connection close
             }
@@ -63,6 +68,7 @@ pub async fn receive_incoming_transfer(
         filename: filename.clone(),
         size,
         direction: "receive",
+        printer_name: printer_name.clone(),
     });
 
     let safe_name = sanitize_filename(&filename);
@@ -83,27 +89,35 @@ pub async fn receive_incoming_transfer(
         }
     };
 
+    if printer_name.is_some() && crate::protocol::send_msg(&mut socket, &true).await.is_err() {
+        let _ = tokio::fs::remove_file(&dest_path).await;
+        let _ = app.emit("transfer-failed", (&transfer_id, "Couldn't approve the print job connection"));
+        return;
+    }
+
     // Persisted BEFORE streaming starts, not after it fails — this is
     // what survives an app restart, not just a connection drop while
     // still running. Removed on completion or explicit cancel; kept on
     // any other failure so a later `ResumeTransfer` connection has
     // something to look up.
-    let _ = db.save_incomplete_transfer(&IncompleteTransfer {
-        transfer_id: transfer_id.clone(),
-        peer_display_name: from_peer.display_name.clone(),
-        peer_device_name: from_peer.device_name.clone(),
-        filename: filename.clone(),
-        file_path: dest_path.to_string_lossy().into_owned(),
-        total_size: size,
-        direction: "receive".into(),
-        created_at: now_unix(),
-        interrupted_at: None, // hasn't stopped yet — see mark_transfer_interrupted below
-    });
+    if printer_name.is_none() {
+        let _ = db.save_incomplete_transfer(&IncompleteTransfer {
+            transfer_id: transfer_id.clone(),
+            peer_display_name: from_peer.display_name.clone(),
+            peer_device_name: from_peer.device_name.clone(),
+            filename: filename.clone(),
+            file_path: dest_path.to_string_lossy().into_owned(),
+            total_size: size,
+            direction: "receive".into(),
+            created_at: now_unix(),
+            interrupted_at: None,
+        });
+    }
 
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_to_disk(
-        socket, file, transfer_id.clone(), size, 0, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(),
+        socket, file, transfer_id.clone(), size, 0, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(), printer_name,
     ));
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: from_peer.id, task, cancel, peer_gone });
 }
@@ -166,7 +180,7 @@ pub async fn resume_incoming_transfer(
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_to_disk(
-        socket, file, transfer_id.clone(), record.total_size, already_have, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(),
+        socket, file, transfer_id.clone(), record.total_size, already_have, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(), None,
     ));
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: from_peer.id, task, cancel, peer_gone });
 }
@@ -182,6 +196,7 @@ async fn stream_to_disk(
     cancel: CancellationToken,
     peer_gone: CancellationToken,
     db: Arc<Db>,
+    printer_name: Option<String>,
 ) {
     // Explicit capacity, matching TRANSFER_CHUNK_SIZE — without this,
     // BufWriter defaults to an internal 8KB buffer, decoupled from
@@ -235,7 +250,14 @@ async fn stream_to_disk(
 
     match result {
         Ok(()) if received == size => {
-            let _ = db.remove_incomplete_transfer(&transfer_id);
+            if let Some(printer_name) = printer_name.as_deref() {
+                if let Err(error) = crate::printer::print_file(&dest_path, printer_name).await {
+                    let _ = app.emit("transfer-failed", (&transfer_id, error));
+                    return;
+                }
+            } else {
+                let _ = db.remove_incomplete_transfer(&transfer_id);
+            }
             let _ = app.emit("transfer-completed", (&transfer_id, dest_path.to_string_lossy().into_owned()));
         }
         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
@@ -253,7 +275,11 @@ async fn stream_to_disk(
             // Stamping interrupted_at here (not at transfer start) is
             // what lets the UI show "interrupted X ago" using the MOST
             // RECENT gap, even across several reconnect attempts.
-            let _ = db.mark_transfer_interrupted(&transfer_id, now_unix());
+            if printer_name.is_some() {
+                let _ = tokio::fs::remove_file(&dest_path).await;
+            } else {
+                let _ = db.mark_transfer_interrupted(&transfer_id, now_unix());
+            }
             let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
         }
     }
@@ -356,7 +382,7 @@ async fn request_resume_from_sender(
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_to_disk(
-        socket, file, transfer_id.clone(), record.total_size, bytes_already_have, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(),
+        socket, file, transfer_id.clone(), record.total_size, bytes_already_have, app.clone(), dest_path, cancel.clone(), peer_gone.clone(), db.clone(), None,
     ));
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: sender.id, task, cancel, peer_gone });
 }

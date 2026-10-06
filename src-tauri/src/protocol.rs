@@ -37,6 +37,7 @@ pub struct PeerInfo {
     pub display_name: String,
     pub device_name: String,
     pub addr: String, // "ip:port" — used to dial this peer directly for transfers
+    pub printers: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -47,6 +48,7 @@ pub enum ConnectionKind {
         transfer_id: String,
         filename: String,
         size: u64,
+        printer_name: Option<String>,
     },
     /// Reconnecting to continue a transfer that was interrupted, not
     /// started fresh — no filename/size needed, since the receiver
