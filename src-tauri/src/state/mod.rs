@@ -5,6 +5,7 @@ pub mod mdns;
 pub mod session;
 pub mod settings;
 pub mod tcp;
+pub mod p_state;
 
 pub use client::ClientState;
 pub use device::DeviceInfo;

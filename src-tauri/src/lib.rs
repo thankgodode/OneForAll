@@ -7,7 +7,9 @@ mod protocol;
 mod printer;
 mod state;
 mod util;
+mod printing;
 
+use printing::printer;
 use db::Db;
 use state::{AppSettings, ClientState, DeviceInfo, MdnsState, PendingIncoming, SessionState, TcpState};
 use std::sync::Arc;
@@ -88,6 +90,9 @@ pub fn run() {
             network::receive::request_resume,
             network::transfers::cancel_transfer,
             network::transfers::remove_incomplete_files,
+            // printers
+            printer::get_local_printers,
+            state::p_state::get_remote_printers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
