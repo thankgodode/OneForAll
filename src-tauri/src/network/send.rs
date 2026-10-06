@@ -43,7 +43,7 @@ pub async fn send_file_to_peers(
         let db = db.inner().clone();
 
         joins.push(tokio::spawn(async move {
-            send_one_file(app, tcp_state, db, file_path, target, my_peer_id).await;
+            send_one_file(app, tcp_state, db, file_path, target, my_peer_id, None, None).await;
         }));
     }
 
@@ -51,8 +51,49 @@ pub async fn send_file_to_peers(
     Ok(())
 }
 
-async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, file_path: Arc<String>, target: PeerInfo, my_peer_id: String) {
+#[tauri::command]
+pub async fn send_print_job(
+    app: AppHandle,
+    session: State<'_, Arc<SessionState>>,
+    tcp_state: State<'_, Arc<TcpState>>,
+    db: State<'_, Arc<Db>>,
+    my_peer_id: String,
+    file_path: String,
+    target_peer_id: String,
+    printer_name: String,
+) -> Result<String, String> {
+    let target = session.roster().into_iter()
+        .find(|peer| peer.id == target_peer_id)
+        .ok_or("That device is no longer connected")?;
+    if !target.printers.iter().any(|printer| printer == &printer_name) {
+        return Err("That printer is no longer available on the selected device".into());
+    }
+
     let transfer_id = uuid::Uuid::new_v4().to_string();
+    tokio::spawn(send_one_file(
+        app,
+        tcp_state.inner().clone(),
+        db.inner().clone(),
+        Arc::new(file_path),
+        target,
+        my_peer_id,
+        Some(printer_name),
+        Some(transfer_id.clone()),
+    ));
+    Ok(transfer_id)
+}
+
+async fn send_one_file(
+    app: AppHandle,
+    tcp_state: Arc<TcpState>,
+    db: Arc<Db>,
+    file_path: Arc<String>,
+    target: PeerInfo,
+    my_peer_id: String,
+    printer_name: Option<String>,
+    supplied_transfer_id: Option<String>,
+) {
+    let transfer_id = supplied_transfer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let Ok(metadata) = tokio::fs::metadata(&*file_path).await else {
         let _ = app.emit("transfer-failed", (&transfer_id, "File no longer exists"));
@@ -76,6 +117,7 @@ async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, fi
         filename: filename.clone(),
         size,
         direction: "send",
+        printer_name: printer_name.clone(),
     });
 
     let Ok(mut socket) = TcpStream::connect(&target.addr).await else {
@@ -85,17 +127,33 @@ async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, fi
 
     let sent_header = send_msg(&mut socket, &ConnectionKind::Transfer {
         peer_id: my_peer_id, transfer_id: transfer_id.clone(), filename: filename.clone(), size,
+        printer_name: printer_name.clone(),
     }).await;
     if sent_header.is_err() {
         let _ = app.emit("transfer-failed", (&transfer_id, "Failed to start transfer"));
         return;
     }
 
+    if printer_name.is_some() {
+        match recv_msg::<bool, _>(&mut socket).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let _ = app.emit("transfer-rejected", &transfer_id);
+                return;
+            }
+            Err(_) => {
+                let _ = app.emit("transfer-failed", (&transfer_id, "Print job approval connection was lost"));
+                return;
+            }
+        }
+    }
+
     // Persisted only once the connection genuinely succeeded and
     // streaming is about to begin — a peer simply being unreachable
     // isn't "interrupted mid-transfer," it's just a failed attempt with
     // nothing sent yet, so it isn't kept as a resumable record.
-    let _ = db.save_incomplete_transfer(&IncompleteTransfer {
+    if printer_name.is_none() {
+        let _ = db.save_incomplete_transfer(&IncompleteTransfer {
         transfer_id: transfer_id.clone(),
         peer_display_name: target.display_name.clone(),
         peer_device_name: target.device_name.clone(),
@@ -105,7 +163,8 @@ async fn send_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, fi
         direction: "send".into(),
         created_at: now_unix(),
         interrupted_at: None,
-    });
+        });
+    }
 
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();

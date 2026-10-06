@@ -14,8 +14,8 @@ import { listen } from "@tauri-apps/api/event";
 //   peer-left                   (peerId: string, reason: "left" | "kicked" | "timedOut")
 //   kicked                       reason: string
 //   disconnected-from-network     reason: "left" | "kicked" | "timedOut" (always "timedOut" in practice — see backend)
-//   incoming-file-request           IncomingFileRequest
-//   transfer-started                  { transferId, peerId, peerName, filename, size, direction }
+//   incoming-file-request           IncomingFileRequest (includes printerName for print jobs)
+//   transfer-started                  { transferId, peerId, peerName, filename, size, direction, printerName? }
 //   transfer-resumed                   (transferId: string, resumedFromBytes: number)
 //   transfer-progress                 TransferProgress
 //   transfer-completed                 (transferId: string, destPath: string)

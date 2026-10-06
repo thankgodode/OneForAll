@@ -36,6 +36,7 @@ pub struct PeerInfo {
     pub display_name: String,
     pub device_name: String,
     pub addr: String, // "ip:port" — used to dial this peer directly for transfers
+    pub printers: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -46,6 +47,7 @@ pub enum ConnectionKind {
         transfer_id: String,
         filename: String,
         size: u64,
+        printer_name: Option<String>,
     },
     /// Reconnecting to continue a transfer that was interrupted, not
     /// started fresh — no filename/size needed, since the receiver
@@ -108,9 +110,9 @@ pub enum DisconnectReason {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ControlMessage {
-    JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16 },
+    JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16, printers: Vec<String> },
     JoinPending,
-    JoinAccepted { session_name: String, peer_id: String, host_device_name: String, roster: Vec<PeerInfo> },
+    JoinAccepted { session_name: String, peer_id: String, host_device_name: String, host_printers: Vec<String>, roster: Vec<PeerInfo> },
     JoinRejected { reason: String },
     PeerJoined(PeerInfo),
     PeerLeft { peer_id: String, reason: DisconnectReason },

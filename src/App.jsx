@@ -15,7 +15,6 @@ import PrintView from "./views/PrintView";
 import NetworkView from "./views/NetworkView";
 import SettingsView from "./views/SettingsView";
 
-import { initialPrintJobs } from "./data/mockData"; // printing has no backend yet — stays mocked
 import { HOST_PEER_ID } from "./data/protocol";
 import { fmtBytes, fmtSpeed, fmtEta, fmtTimeAgo } from "./utils/format";
 import { toUiDevice } from "./utils/peer";
@@ -41,6 +40,7 @@ const emptyNetwork = {
 export default function App() {
   const [view, setView] = useState("dashboard");
   const [deviceName, setDeviceName] = useState("This device");
+  const [localPrinters, setLocalPrinters] = useState([]);
   const [myListenPort, setMyListenPort] = useState(null);
 
   const [network, setNetwork] = useState(emptyNetwork);
@@ -51,7 +51,7 @@ export default function App() {
   const [accessControl, setAccessControl] = useState({ requireApproval: true, joinCode: "" });
 
   const [transfers, setTransfers] = useState([]);
-  const [printJobs, setPrintJobs] = useState(initialPrintJobs);
+  const [printJobs, setPrintJobs] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [modal, setModal] = useState(null);
 
@@ -107,6 +107,14 @@ export default function App() {
         setDeviceName(name);
       } catch {
         // keep the "This device" default — not fatal
+      }
+
+      try {
+        const printers = await api.getPrinters();
+        if (cancelled) return;
+        setLocalPrinters(printers);
+      } catch {
+        if (!cancelled) toast("Couldn't detect this device's printers", true);
       }
 
       // Restores whatever was saved last session — display name, avatar
@@ -239,6 +247,16 @@ export default function App() {
 
         onIncomingFileRequest: (req) => {
           setPendingIncomingFiles((prev) => (prev.some((r) => r.transferId === req.transferId) ? prev : [...prev, req]));
+          if (req.printerName) {
+            setPrintJobs((prev) => prev.some((job) => job.id === req.transferId) ? prev : [{
+              id: req.transferId,
+              file: req.filename,
+              target: "This device",
+              printer: req.printerName,
+              status: "pending",
+              direction: "receive",
+            }, ...prev]);
+          }
         },
         onTransferStarted: (t) => {
           setTransfers((prev) => (
@@ -259,6 +277,21 @@ export default function App() {
               ...prev,
             ]
           ));
+          if (t.printerName) {
+            setPrintJobs((prev) => {
+              const job = {
+                id: t.transferId,
+                file: t.filename,
+                target: t.direction === "send" ? t.peerName : "This device",
+                printer: t.printerName,
+                status: t.direction === "send" ? "pending" : "printing",
+                direction: t.direction,
+              };
+              return prev.some((item) => item.id === t.transferId)
+                ? prev.map((item) => item.id === t.transferId ? { ...item, ...job } : item)
+                : [job, ...prev];
+            });
+          }
         },
         // Fires on both a successful reconnect-and-continue AND (should
         // it ever arrive for a row that isn't already in state) a
@@ -287,15 +320,21 @@ export default function App() {
         },
         onTransferCompleted: (transferId) => {
           updateTransfer(transferId, { status: "completed", progress: 100 });
+          setPrintJobs((prev) => prev.map((job) => job.id === transferId
+            ? { ...job, status: job.direction === "send" ? "sent" : "completed" }
+            : job));
         },
         onTransferFailed: (transferId, reason) => {
           updateTransfer(transferId, { status: "failed", error: reason });
+          setPrintJobs((prev) => prev.map((job) => job.id === transferId ? { ...job, status: "failed", error: reason } : job));
         },
         onTransferCancelled: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Cancelled" });
+          setPrintJobs((prev) => prev.map((job) => job.id === transferId ? { ...job, status: "failed" } : job));
         },
         onTransferRejected: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Rejected by recipient" });
+          setPrintJobs((prev) => prev.map((job) => job.id === transferId ? { ...job, status: "rejected" } : job));
         },
       });
 
@@ -325,8 +364,10 @@ export default function App() {
       setPendingIncomingFiles((prev) => prev.filter((r) => r.transferId !== req.transferId));
     };
     setModal({
-      title: `Incoming file: ${req.filename}`,
-      body: `${req.from?.displayName || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
+      title: req.printerName ? `Print job: ${req.filename}` : `Incoming file: ${req.filename}`,
+      body: req.printerName
+        ? `${req.from?.displayName || "Someone"} wants to send ${req.filename} (${fmtBytes(req.size)}) to print on ${req.printerName}.`
+        : `${req.from?.displayName || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
       confirmLabel: "Accept",
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
@@ -396,16 +437,20 @@ export default function App() {
     }
   };
 
-  /* ---------------- printing (still mocked — no backend support yet) ---------------- */
+  /* ---------------- printing ---------------- */
 
-  const handlePrint = (doc, target) => {
-    setPrintJobs((prev) => [
-      { id: `p${Date.now()}`, file: doc.name, target: target.name, printer: target.printerName, status: "pending", pages: Math.ceil(Math.random() * 6) },
-      ...prev,
-    ]);
-  };
-  const handleJobAction = (id, status) => {
-    setPrintJobs((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
+  const handlePrint = async (doc, target, printerName) => {
+    if (!network.myPeerId) throw new Error("Join or host a network before sending print jobs");
+    const id = await api.sendPrintJob(network.myPeerId, doc.path, target.id, printerName);
+    setPrintJobs((prev) => prev.some((job) => job.id === id) ? prev : [{
+      id,
+      file: doc.name,
+      target: target.name,
+      printer: printerName,
+      status: "pending",
+      direction: "send",
+    }, ...prev]);
+    toast(`Print job sent to ${target.name} (${printerName})`);
   };
 
   /* ---------------- network: hosting ---------------- */
@@ -461,7 +506,7 @@ export default function App() {
     }
     setNetwork((n) => ({ ...n, joinStatus: "connecting", hostAddr }));
     try {
-      const me = await api.joinNetwork(hostAddr, profile.displayName, myListenPort);
+      const me = await api.joinNetwork(hostAddr, profile.displayName, myListenPort, localPrinters);
       setNetwork((n) => ({ ...n, myPeerId: me.id }));
     } catch (e) {
       setNetwork(emptyNetwork);
@@ -506,7 +551,8 @@ export default function App() {
     device: deviceName,
     status: "online",
     isSelf: true,
-    hasPrinter: false,
+    hasPrinter: localPrinters.length > 0,
+    printerNames: localPrinters,
     color: profile.avatarColor,
   };
   const devices = [
@@ -532,7 +578,7 @@ export default function App() {
             {view === "send" && <SendFilesView devices={devices} onSend={handleSend} toast={toast} />}
             {view === "transfers" && <TransfersView transfers={transfers} onAction={handleTransferAction} />}
             {view === "print" && (
-              <PrintView devices={devices} printJobs={printJobs} onPrint={handlePrint} onJobAction={handleJobAction} toast={toast} />
+              <PrintView devices={devices} printJobs={printJobs} onPrint={handlePrint} toast={toast} />
             )}
             {view === "network" && (
               <NetworkView

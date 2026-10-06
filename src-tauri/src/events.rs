@@ -26,6 +26,7 @@ pub struct IncomingFileRequest {
     pub filename: String,
     pub size: u64,
     pub from: PeerInfo,
+    pub printer_name: Option<String>,
 }
 
 /// Fired exactly once per transfer, on both directions, right before
@@ -45,4 +46,5 @@ pub struct TransferStarted {
     pub filename: String,
     pub size: u64,
     pub direction: &'static str, // "send" | "receive"
+    pub printer_name: Option<String>,
 }

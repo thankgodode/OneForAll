@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 // --- device / settings ---
 export const getDeviceName = () => invoke("get_device_name");
+export const getPrinters = () => invoke("get_printers");
 // getSettings() restores whatever was saved last session — call this
 // once at startup instead of trusting default/local React state, since
 // display name, avatar color, download dir, and the confirm-files
@@ -44,8 +45,8 @@ export const stopHosting = () => invoke("stop_hosting");
 // --- join / roster ---
 // myListenPort must come from startListening(), called once at app boot —
 // it's what lets the host hand out a dialable address for THIS device.
-export const joinNetwork = (hostAddr, displayName, myListenPort) =>
-  invoke("join_network", { hostAddr, displayName, myListenPort });
+export const joinNetwork = (hostAddr, displayName, myListenPort, printers) =>
+  invoke("join_network", { hostAddr, displayName, myListenPort, printers });
 export const leaveNetwork = () => invoke("leave_network");
 export const respondToJoin = (requestId, accept) => invoke("respond_to_join", { requestId, accept });
 export const kickPeer = (peerId) => invoke("kick_peer", { peerId });
@@ -53,6 +54,8 @@ export const kickPeer = (peerId) => invoke("kick_peer", { peerId });
 // --- transfers ---
 export const sendFileToPeers = (myPeerId, filePath, targetPeerIds) =>
   invoke("send_file_to_peers", { myPeerId, filePath, targetPeerIds });
+export const sendPrintJob = (myPeerId, filePath, targetPeerId, printerName) =>
+  invoke("send_print_job", { myPeerId, filePath, targetPeerId, printerName });
 export const respondToIncomingFile = (transferId, accept) =>
   invoke("respond_to_incoming_file", { transferId, accept });
 export const cancelTransfer = (transferId) => invoke("cancel_transfer", { transferId });

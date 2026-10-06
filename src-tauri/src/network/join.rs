@@ -24,6 +24,7 @@ pub async fn join_network(
     host_addr: String,
     display_name: String,
     my_listen_port: u16,
+    printers: Vec<String>,
     tcp_state: State<'_, Arc<TcpState>>,
 ) -> Result<PeerInfo, String> {
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
@@ -33,6 +34,7 @@ pub async fn join_network(
         device_name: device.name.clone(),
         code: None,
         listen_port: my_listen_port,
+        printers,
     }).await.map_err(|e| e.to_string())?;
 
     loop {
@@ -40,12 +42,13 @@ pub async fn join_network(
             Ok(ControlMessage::JoinPending) => {
                 let _ = app.emit("join-pending", ());
             }
-            Ok(ControlMessage::JoinAccepted { session_name, peer_id, host_device_name, roster }) => {
+            Ok(ControlMessage::JoinAccepted { session_name, peer_id, host_device_name, host_printers, roster }) => {
                 let host_info = PeerInfo {
                     id: HOST_PEER_ID.into(),
                     display_name: "Host".into(),
                     device_name: host_device_name,
                     addr: host_addr.clone(),
+                    printers: host_printers,
                 };
                 // The frontend gets the host's real info here — this is
                 // the only point in the whole flow where it does. Without
@@ -60,6 +63,7 @@ pub async fn join_network(
                     display_name: "You".into(),
                     device_name: device.name.clone(),
                     addr: format!("127.0.0.1:{my_listen_port}"), // not used for dialing self; kept for shape consistency
+                    printers: device.printers.clone(),
                 };
 
                 // Mirror the roster into this device's own SessionState so
