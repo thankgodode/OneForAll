@@ -8,6 +8,8 @@
 //! 3. `ConnectionKind::Transfer` connections send raw file bytes immediately
 //!    after their `ConnectionKind` frame — no further framing needed since
 //!    the size is already known from it.
+//! 4. `ConnectionKind::PrintJob` connections wait for the recipient's
+//!    approval before sending bytes, then exchange one final result.
 
 use std::{net::TcpStream, sync::Arc};
 
@@ -16,8 +18,8 @@ use tauri::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
-use crate::{db::Db, state::TcpState};
 use crate::printing::printer::PrinterInfo;
+use crate::{db::Db, state::TcpState};
 
 // `rename_all = "camelCase"` on every struct that crosses the JS boundary
 // (this one, and everything in events.rs) is deliberate and load-bearing:
@@ -73,6 +75,7 @@ pub enum ConnectionKind {
         transfer_id: String,
         bytes_already_have: u64,
     },
+<<<<<<< HEAD
     // PrinterInfo{
     //     id: String,
     //     name: String,
@@ -106,6 +109,24 @@ pub enum PrintResponse {
         job_id: String,
         reason: String,
     },
+=======
+    PrintJob {
+        peer_id: String,
+        job_id: String,
+        printer_id: String,
+        filename: String,
+        size: u64,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum PrintJobResponse {
+    Accepted,
+    Rejected { reason: String },
+    Printing,
+    Completed,
+    Failed { reason: String },
+>>>>>>> d8e3fb5 (Print fature implementation)
 }
 
 /// The receiver's answer to `ConnectionKind::ResumeTransfer` — how many
@@ -142,13 +163,37 @@ pub enum DisconnectReason {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ControlMessage {
+<<<<<<< HEAD
     JoinRequest { display_name: String, device_name: String, code: Option<String>, listen_port: u16, printers: Vec<PrinterInfo> },
     JoinPending,
     JoinAccepted { session_name: String, peer_id: String, host_device_name: String, roster: Vec<PeerInfo>, printers:Vec<PrinterInfo>},
     JoinRejected { reason: String },
+=======
+    JoinRequest {
+        display_name: String,
+        device_name: String,
+        code: Option<String>,
+        listen_port: u16,
+    },
+    JoinPending,
+    JoinAccepted {
+        session_name: String,
+        peer_id: String,
+        host_device_name: String,
+        roster: Vec<PeerInfo>,
+    },
+    JoinRejected {
+        reason: String,
+    },
+>>>>>>> d8e3fb5 (Print fature implementation)
     PeerJoined(PeerInfo),
-    PeerLeft { peer_id: String, reason: DisconnectReason },
-    Kick { reason: String },
+    PeerLeft {
+        peer_id: String,
+        reason: DisconnectReason,
+    },
+    Kick {
+        reason: String,
+    },
     Leave,
     Ping,
     Pong,
@@ -186,7 +231,10 @@ where
 {
     let len = stream.read_u32().await? as usize;
     if len > MAX_FRAME_BYTES {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;

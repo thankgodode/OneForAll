@@ -15,7 +15,6 @@ import PrintView from "./views/PrintView";
 import NetworkView from "./views/NetworkView";
 import SettingsView from "./views/SettingsView";
 
-import { initialPrintJobs } from "./data/mockData"; // printing has no backend yet — stays mocked
 import { HOST_PEER_ID } from "./data/protocol";
 import { fmtBytes, fmtSpeed, fmtEta, fmtTimeAgo } from "./utils/format";
 import { toUiDevice } from "./utils/peer";
@@ -48,10 +47,12 @@ export default function App() {
   const [discoveredHosts, setDiscoveredHosts] = useState([]); // [{fullname, addr}]
   const [pendingJoins, setPendingJoins] = useState([]); // PeerInfo[] awaiting host approval
   const [pendingIncomingFiles, setPendingIncomingFiles] = useState([]); // IncomingFileRequest[]
+  const [pendingPrintJobs, setPendingPrintJobs] = useState([]);
+  const [remotePrinters, setRemotePrinters] = useState([]);
   const [accessControl, setAccessControl] = useState({ requireApproval: true, joinCode: "" });
 
   const [transfers, setTransfers] = useState([]);
-  const [printJobs, setPrintJobs] = useState(initialPrintJobs);
+  const [printJobs, setPrintJobs] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [modal, setModal] = useState(null);
 
@@ -60,8 +61,7 @@ export default function App() {
     avatarColor: "#3FDCC4",
     downloadPath: "",
     notifications: { incoming: true, complete: true, print: false },
-    confirmations: { files: true, prints: true },
-    printPrefs: { autoAccept: false, background: true },
+    confirmations: { files: true },
   });
 
   const toast = useCallback((message, error) => {
@@ -70,13 +70,12 @@ export default function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3400);
   }, []);
 
-  // A modal descriptor can carry an optional onCancel — ConfirmModal
-  // itself only knows "confirm" vs "close"; this is what lets closing
-  // (rather than confirming) an incoming-file prompt count as a reject.
-  const closeModal = useCallback(() => {
+  // A modal descriptor can carry an optional onCancel — this lets closing
+  // an incoming request count as a rejection.
+  const closeModal = useCallback((cancelled = true) => {
     const closing = modal;
     setModal(null);
-    closing?.onCancel?.();
+    if (cancelled) closing?.onCancel?.();
   }, [modal]);
 
   const updateTransfer = useCallback((transferId, patch) => {
@@ -206,11 +205,15 @@ export default function App() {
           // list would show every peer except the one it's actually
           // connected to.
           setRoster([{ ...hostInfo, isHost: true }, ...initialRoster]);
+          api.getRemotePrinters()
+            .then(setRemotePrinters)
+            .catch(() => toast("Couldn't load printers on the network", true));
         },
         onPeerJoined: (peer) => {
           setRoster((prev) => (prev.some((p) => p.id === peer.id) ? prev : [...prev, peer]));
         },
         onPeerLeft: (peerId, reason) => {
+          setRemotePrinters((prev) => prev.filter((printer) => printer.peerId !== peerId));
           setRoster((prev) => {
             const peer = prev.find((p) => p.id === peerId);
             // Reason-aware messaging is the whole point of the backend
@@ -224,11 +227,13 @@ export default function App() {
         onKicked: (reason) => {
           setNetwork(emptyNetwork);
           setRoster([]);
+          setRemotePrinters([]);
           toast(`Removed from network: ${reason}`, true);
         },
         onDisconnected: (reason) => {
           setNetwork(emptyNetwork);
           setRoster([]);
+          setRemotePrinters([]);
           // In practice this is always "timedOut" — an explicit Leave or
           // Kick already resolves through their own dedicated events
           // before this one would ever fire (see join.rs) — but matching
@@ -297,6 +302,31 @@ export default function App() {
         onTransferRejected: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Rejected by recipient" });
         },
+        onIncomingPrintJob: (job) => {
+          setPendingPrintJobs((prev) => (prev.some((item) => item.jobId === job.jobId) ? prev : [...prev, job]));
+        },
+        onPrintJobStatus: (job) => {
+          setPrintJobs((prev) => {
+            const updated = { ...job, id: job.jobId };
+            return prev.some((item) => item.id === job.jobId)
+              ? prev.map((item) => item.id === job.jobId ? updated : item)
+              : [updated, ...prev];
+          });
+        },
+        onPeerPrintersUpdated: (update) => {
+          const isHost = update.peerId === HOST_PEER_ID;
+          setRemotePrinters((prev) => [
+            ...prev.filter((printer) => printer.peerId !== update.peerId),
+            ...update.printers.map((printer) => ({
+              peerId: update.peerId,
+              peerDisplayName: isHost ? "Host" : update.peerId,
+              peerDeviceName: "",
+              printerId: printer.id,
+              printerName: printer.name,
+              isDefault: printer.isDefault,
+            })),
+          ]);
+        },
       });
 
       // If cleanup already ran by the time this resolved (the exact
@@ -316,9 +346,26 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Show incoming-file prompts one at a time via the shared ConfirmModal.
+  // Show print and file prompts one at a time via the shared ConfirmModal.
   useEffect(() => {
-    if (modal || pendingIncomingFiles.length === 0) return;
+    if (modal) return;
+    if (pendingPrintJobs.length > 0) {
+      const job = pendingPrintJobs[0];
+      const resolve = (accept) => {
+        api.respondToPrintJob(job.jobId, accept)
+          .catch(() => toast("Failed to respond to print job", true));
+        setPendingPrintJobs((prev) => prev.filter((item) => item.jobId !== job.jobId));
+      };
+      setModal({
+        title: `Print request: ${job.filename}`,
+        body: `${job.from?.displayName || "Someone"} wants to print ${fmtBytes(job.size)} on ${job.printerName}.`,
+        confirmLabel: "Accept and print",
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+      return;
+    }
+    if (pendingIncomingFiles.length === 0) return;
     const req = pendingIncomingFiles[0];
     const resolve = (accept) => {
       api.respondToIncomingFile(req.transferId, accept).catch(() => toast("Failed to respond to file request", true));
@@ -332,7 +379,7 @@ export default function App() {
       onCancel: () => resolve(false),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingIncomingFiles, modal]);
+  }, [pendingIncomingFiles, pendingPrintJobs, modal]);
 
   /* ---------------- transfers ---------------- */
 
@@ -396,16 +443,21 @@ export default function App() {
     }
   };
 
-  /* ---------------- printing (still mocked — no backend support yet) ---------------- */
+  /* ---------------- printing ---------------- */
 
-  const handlePrint = (doc, target) => {
-    setPrintJobs((prev) => [
-      { id: `p${Date.now()}`, file: doc.name, target: target.name, printer: target.printerName, status: "pending", pages: Math.ceil(Math.random() * 6) },
-      ...prev,
-    ]);
-  };
-  const handleJobAction = (id, status) => {
-    setPrintJobs((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
+  const handlePrint = async (doc, printer) => {
+    if (!network.myPeerId) {
+      toast("Join or host a network before sending print jobs", true);
+      throw new Error("Not connected to a network");
+    }
+    try {
+      await api.sendPrintJob(network.myPeerId, doc.path, printer.peerId, printer.printerId);
+      const peerName = roster.find((peer) => peer.id === printer.peerId)?.displayName || printer.peerDisplayName;
+      toast(`Print request sent to ${peerName} (${printer.printerName})`);
+    } catch (error) {
+      toast(`Couldn't send print job: ${error}`, true);
+      throw error;
+    }
   };
 
   /* ---------------- network: hosting ---------------- */
@@ -431,6 +483,7 @@ export default function App() {
     }
     setNetwork(emptyNetwork);
     setRoster([]);
+    setRemotePrinters([]);
   };
 
   const handleSetAccessControl = async (requireApproval, joinCode) => {
@@ -473,6 +526,7 @@ export default function App() {
     api.leaveNetwork().catch(() => {});
     setNetwork(emptyNetwork);
     setRoster([]);
+    setRemotePrinters([]);
   };
 
   /* ---------------- settings ---------------- */
@@ -506,12 +560,20 @@ export default function App() {
     device: deviceName,
     status: "online",
     isSelf: true,
-    hasPrinter: false,
+    hasPrinter: remotePrinters.some((printer) => printer.peerId === network.myPeerId),
     color: profile.avatarColor,
   };
   const devices = [
     selfDevice,
-    ...roster.map((p) => toUiDevice(p, { status: transferringPeerIds.has(p.id) ? "transferring" : "online" })),
+    ...roster.map((p) => {
+      const peerPrinters = remotePrinters.filter((printer) => printer.peerId === p.id);
+      const device = toUiDevice(p, { status: transferringPeerIds.has(p.id) ? "transferring" : "online" });
+      return {
+        ...device,
+        hasPrinter: peerPrinters.length > 0,
+        printerName: peerPrinters[0]?.printerName,
+      };
+    }),
   ];
 
   return (
@@ -532,7 +594,7 @@ export default function App() {
             {view === "send" && <SendFilesView devices={devices} onSend={handleSend} toast={toast} />}
             {view === "transfers" && <TransfersView transfers={transfers} onAction={handleTransferAction} />}
             {view === "print" && (
-              <PrintView devices={devices} printJobs={printJobs} onPrint={handlePrint} onJobAction={handleJobAction} toast={toast} />
+              <PrintView devices={devices} printers={remotePrinters} printJobs={printJobs} onPrint={handlePrint} toast={toast} />
             )}
             {view === "network" && (
               <NetworkView

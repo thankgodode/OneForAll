@@ -20,7 +20,7 @@ export default function ConfirmModal({ modal, onClose }) {
           <button
             className="btn btn-danger"
             style={{ background: "var(--red)", color: "#2A0B0D", borderColor: "var(--red)" }}
-            onClick={() => { modal.onConfirm(); onClose(); }}
+            onClick={() => { modal.onConfirm(); onClose(false); }}
           >
             {modal.confirmLabel || "Confirm"}
           </button>

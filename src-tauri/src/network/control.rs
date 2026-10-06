@@ -1,5 +1,13 @@
+<<<<<<< HEAD
 use crate::printing::printer;
 use crate::protocol::{recv_msg, send_msg, ControlMessage, DisconnectReason, PeerInfo};
+=======
+use crate::events::PeerPrintersUpdated;
+use crate::printing::printer::list_local_printers;
+use crate::protocol::{
+    recv_msg, send_msg, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID,
+};
+>>>>>>> d8e3fb5 (Print fature implementation)
 use crate::state::{DeviceInfo, PendingJoin, SessionState, TcpState};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,15 +30,32 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// what lets a departing peer's active transfers get stopped (kept
 /// resumable, not abandoned) rather than silently continuing to stream
 /// to someone no longer in the session.
-pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, session: Arc<SessionState>, device: Arc<DeviceInfo>, tcp: Arc<TcpState>, app: AppHandle) {
+pub async fn handle_control_connection(
+    mut socket: TcpStream,
+    addr: SocketAddr,
+    session: Arc<SessionState>,
+    device: Arc<DeviceInfo>,
+    tcp: Arc<TcpState>,
+    app: AppHandle,
+) {
     let msg: ControlMessage = match recv_msg(&mut socket).await {
         Ok(m) => m,
         Err(_) => return,
     };
 
+<<<<<<< HEAD
     let local_printers = printer::list_local_printers();
 
     let ControlMessage::JoinRequest { display_name, device_name, code, listen_port , printers} = msg else {
+=======
+    let ControlMessage::JoinRequest {
+        display_name,
+        device_name,
+        code,
+        listen_port,
+    } = msg
+    else {
+>>>>>>> d8e3fb5 (Print fature implementation)
         return; // first message on a Control connection must be a join request
     };
 
@@ -40,7 +65,12 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // nothing is listening on it. The IP is still trustworthy (it's
     // where the bytes actually came from); only the port needs replacing.
     let dialable_addr = format!("{}:{}", addr.ip(), listen_port);
-    let info = PeerInfo { id: request_id.clone(), display_name, device_name, addr: dialable_addr };
+    let info = PeerInfo {
+        id: request_id.clone(),
+        display_name,
+        device_name,
+        addr: dialable_addr,
+    };
 
     let auto_accept = *session.auto_accept.lock().unwrap();
     let admitted = if auto_accept || session.code_matches(&code) {
@@ -48,7 +78,13 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     } else {
         let _ = send_msg(&mut socket, &ControlMessage::JoinPending).await;
         let (tx, rx) = oneshot::channel();
-        session.pending.lock().unwrap().insert(request_id.clone(), PendingJoin { info: info.clone(), responder: tx });
+        session.pending.lock().unwrap().insert(
+            request_id.clone(),
+            PendingJoin {
+                info: info.clone(),
+                responder: tx,
+            },
+        );
         let _ = app.emit("join-requested", &info);
         // waits here — possibly a while — for a human to click Accept or
         // Reject in the UI. Cheap to hold open: this is async I/O, not a
@@ -58,7 +94,13 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     session.pending.lock().unwrap().remove(&request_id);
 
     if !admitted {
-        let _ = send_msg(&mut socket, &ControlMessage::JoinRejected { reason: "Declined by host".into() }).await;
+        let _ = send_msg(
+            &mut socket,
+            &ControlMessage::JoinRejected {
+                reason: "Declined by host".into(),
+            },
+        )
+        .await;
         return;
     }
 
@@ -71,12 +113,24 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // gets created a few lines below — echoing PeerJoined(info) back
     // down their own connection describing themselves.
     let roster = session.roster();
+    let existing_printers = roster
+        .iter()
+        .filter_map(|peer| {
+            session
+                .peer_printers(&peer.id)
+                .map(|printers| (peer.id.clone(), printers))
+        })
+        .collect::<Vec<_>>();
     session.broadcast(ControlMessage::PeerJoined(info.clone()));
 
     let (outbox_tx, mut outbox_rx) = mpsc::unbounded_channel();
     let heartbeat_tx = outbox_tx.clone(); // cloned BEFORE the move below — see the ticker task further down
     let reply_tx = outbox_tx.clone(); // cloned for the SAME reason — see the Ping arm in the read loop below
+<<<<<<< HEAD
     session.insert_peer(info.clone(), Some(outbox_tx), printers.clone());
+=======
+    session.insert_peer(info.clone(), Some(outbox_tx.clone()));
+>>>>>>> d8e3fb5 (Print fature implementation)
 
     println!("Joined peer printer: {:?}", printers);
     // Extracted into a local BEFORE the `.await` below on purpose: a
@@ -89,6 +143,7 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // a local first ends the guard's scope at the `let`, well before the
     // `.await` is ever reached.
     let session_name = session.session_name.lock().unwrap().clone();
+<<<<<<< HEAD
     let _ = send_msg(&mut socket, &ControlMessage::JoinAccepted {
         session_name,
         peer_id: info.id.clone(),
@@ -96,6 +151,26 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         roster,
         printers: local_printers
     }).await;
+=======
+    let _ = send_msg(
+        &mut socket,
+        &ControlMessage::JoinAccepted {
+            session_name,
+            peer_id: info.id.clone(),
+            host_device_name: device.name.clone(),
+            roster,
+        },
+    )
+    .await;
+
+    let _ = outbox_tx.send(ControlMessage::PrinterList {
+        peer_id: HOST_PEER_ID.into(),
+        printers: list_local_printers(),
+    });
+    for (peer_id, printers) in existing_printers {
+        let _ = outbox_tx.send(ControlMessage::PrinterList { peer_id, printers });
+    }
+>>>>>>> d8e3fb5 (Print fature implementation)
 
     let _ = app.emit("peer-joined", &info);
 
@@ -120,7 +195,9 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
         let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
         loop {
             ticker.tick().await;
-            if heartbeat_tx.send(ControlMessage::Ping).is_err() { break; }
+            if heartbeat_tx.send(ControlMessage::Ping).is_err() {
+                break;
+            }
         }
     });
 
@@ -133,10 +210,13 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // every successful receive (not just Ping) is what backs
     // `seconds_since_seen` for anyone querying this peer's liveness.
     let disconnect_reason = loop {
-        match tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await {
-            Ok(Ok(ControlMessage::Leave)) => {
-                break DisconnectReason::Left
-            },
+        match tokio::time::timeout(
+            HEARTBEAT_TIMEOUT,
+            recv_msg::<ControlMessage, _>(&mut read_half),
+        )
+        .await
+        {
+            Ok(Ok(ControlMessage::Leave)) => break DisconnectReason::Left,
             Ok(Ok(ControlMessage::Ping)) => {
                 // Reply immediately, on the SAME outbox the periodic
                 // heartbeat task already writes through — this is what
@@ -149,6 +229,22 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
                 session.touch_peer(&info.id);
                 let _ = reply_tx.send(ControlMessage::Pong);
             }
+            Ok(Ok(ControlMessage::PrinterList { printers, .. })) => {
+                session.touch_peer(&info.id);
+                session.set_peer_printers(&info.id, printers.clone());
+                let update = PeerPrintersUpdated {
+                    peer_id: info.id.clone(),
+                    printers: printers.clone(),
+                };
+                session.broadcast_except(
+                    &info.id,
+                    ControlMessage::PrinterList {
+                        peer_id: info.id.clone(),
+                        printers,
+                    },
+                );
+                let _ = app.emit("peer-printers-updated", update);
+            }
             Ok(Ok(_)) => session.touch_peer(&info.id), // Pong, or anything else — any traffic at all counts as "still alive"
             Ok(Err(_)) | Err(_) => {
                 // A real error or a timeout both mean the same thing here:
@@ -157,7 +253,11 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
                 // set (if at all) by kick_peer BEFORE this loop ever saw
                 // anything wrong — nothing about the connection itself
                 // distinguishes the two.
-                break if session.was_kicked(&info.id) { DisconnectReason::Kicked } else { DisconnectReason::TimedOut };
+                break if session.was_kicked(&info.id) {
+                    DisconnectReason::Kicked
+                } else {
+                    DisconnectReason::TimedOut
+                };
             }
         }
     };
@@ -171,6 +271,9 @@ pub async fn handle_control_connection(mut socket: TcpStream, addr: SocketAddr, 
     // this peer just left) — stops here. Kept resumable, not deleted:
     // see the peer_gone vs cancel distinction on TransferHandle.
     tcp.stop_transfers_with_peer(&info.id);
-    session.broadcast(ControlMessage::PeerLeft { peer_id: info.id.clone(), reason: disconnect_reason.clone() });
+    session.broadcast(ControlMessage::PeerLeft {
+        peer_id: info.id.clone(),
+        reason: disconnect_reason.clone(),
+    });
     let _ = app.emit("peer-left", (&info.id, &disconnect_reason));
 }

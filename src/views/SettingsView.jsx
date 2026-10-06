@@ -19,10 +19,8 @@ function SettingsRow({ label, desc, on, onClick }) {
 }
 
 // Profile (local-only), notification prefs (local-only — no backend
-// support yet), and the two settings that ARE real: confirm-incoming-files
-// and download location, both wired to actual backend commands via
-// `onSetConfirmFiles`/`onSetDownloadDir`. Printing prefs stay mock,
-// matching PrintView, since there's no backend support for printing yet.
+// support yet), and settings wired to backend commands for incoming
+// file confirmation and download location.
 export default function SettingsView({ profile, setProfile, onSetDisplayName, onSetAvatarColor, onSetConfirmFiles, onSetDownloadDir, deviceName, myListenPort, toast }) {
   const patchGroup = (group, key) => setProfile((p) => ({ ...p, [group]: { ...p[group], [key]: !p[group][key] } }));
 
@@ -102,13 +100,13 @@ export default function SettingsView({ profile, setProfile, onSetDisplayName, on
           on={profile.confirmations.files}
           onClick={() => onSetConfirmFiles(!profile.confirmations.files)}
         />
-        <SettingsRow label="Confirm print jobs" desc="Require approval before printing (not backed by a real setting yet)" on={profile.confirmations.prints} onClick={() => patchGroup("confirmations", "prints")} />
+        <SettingsRow label="Confirm print jobs" desc="Every incoming print job requires approval" on />
 
         <div className="disp" style={{ fontSize: 13, fontWeight: 600, margin: "18px 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
           <Printer size={15} color="var(--text-tertiary)" /> Printing
         </div>
-        <SettingsRow label="Auto-accept trusted devices" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.autoAccept} onClick={() => patchGroup("printPrefs", "autoAccept")} />
-        <SettingsRow label="Print in background" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.background} onClick={() => patchGroup("printPrefs", "background")} />
+        <SettingsRow label="Auto-accept trusted devices" desc="Not implemented yet" on={false} />
+        <SettingsRow label="Print in background" desc="Not implemented yet" on={false} />
       </div>
 
       <div className="card" style={{ flex: 1, minWidth: 260 }}>

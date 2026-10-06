@@ -4,7 +4,9 @@
 //! shared state a feature needs — this keeps that list to one.
 
 use crate::db::Db;
-use crate::state::{AppSettings, DeviceInfo, PendingIncoming, SessionState, TcpState};
+use crate::state::{
+    AppSettings, DeviceInfo, PendingIncoming, PendingPrintJobs, SessionState, TcpState,
+};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -13,6 +15,7 @@ pub struct AppContext {
     pub tcp: Arc<TcpState>,
     pub settings: Arc<AppSettings>,
     pub pending_incoming: Arc<PendingIncoming>,
+    pub pending_print_jobs: Arc<PendingPrintJobs>,
     pub device: Arc<DeviceInfo>,
     pub db: Arc<Db>,
 }

@@ -1,8 +1,14 @@
 use crate::context::AppContext;
 use crate::db::Db;
 use crate::network::dispatch::handle_connection;
+<<<<<<< HEAD
 use crate::printing::printer::get_local_printers;
 use crate::state::{AppSettings, DeviceInfo, PendingIncoming, SessionState, TcpState};
+=======
+use crate::state::{
+    AppSettings, DeviceInfo, PendingIncoming, PendingPrintJobs, SessionState, TcpState,
+};
+>>>>>>> d8e3fb5 (Print fature implementation)
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::net::TcpListener;
@@ -13,7 +19,9 @@ use tokio::net::TcpListener;
 /// this — not just whoever is "hosting" — which is why it's split out
 /// from `network::hosting::start_hosting` rather than being part of it.
 pub async fn bind_and_serve(ctx: AppContext, app: AppHandle) -> Result<u16, String> {
-    let listener = TcpListener::bind("0.0.0.0:0").await.map_err(|e| e.to_string())?;
+    let listener = TcpListener::bind("0.0.0.0:0")
+        .await
+        .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let tcp_state = ctx.tcp.clone();
@@ -55,6 +63,7 @@ pub async fn start_listening(
     session_state: State<'_, Arc<SessionState>>,
     settings_state: State<'_, Arc<AppSettings>>,
     pending_state: State<'_, Arc<PendingIncoming>>,
+    pending_print_jobs: State<'_, Arc<PendingPrintJobs>>,
     device_state: State<'_, Arc<DeviceInfo>>,
     db_state: State<'_, Arc<Db>>,
 ) -> Result<u16, String> {
@@ -63,6 +72,7 @@ pub async fn start_listening(
         tcp: tcp_state.inner().clone(),
         settings: settings_state.inner().clone(),
         pending_incoming: pending_state.inner().clone(),
+        pending_print_jobs: pending_print_jobs.inner().clone(),
         device: device_state.inner().clone(),
         db: db_state.inner().clone(),
     };

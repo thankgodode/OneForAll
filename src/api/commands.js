@@ -80,3 +80,11 @@ export const resumeTransfer = (myPeerId, transferId) =>
   invoke("resume_transfer", { myPeerId, transferId });
 export const requestResume = (myPeerId, transferId) =>
   invoke("request_resume", { myPeerId, transferId });
+
+// --- printing ---
+export const getLocalPrinters = () => invoke("get_local_printers");
+export const getRemotePrinters = () => invoke("get_remote_printers");
+export const sendPrintJob = (myPeerId, filePath, targetPeerId, printerId) =>
+  invoke("send_print_job", { myPeerId, filePath, targetPeerId, printerId });
+export const respondToPrintJob = (jobId, accept) =>
+  invoke("respond_to_print_job", { jobId, accept });

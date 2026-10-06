@@ -1,6 +1,15 @@
+<<<<<<< HEAD
 use crate::protocol::{recv_msg, send_msg, ConnectionKind, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID};
 use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
 use crate::printing::printer::{self, PrinterInfo};
+=======
+use crate::events::PeerPrintersUpdated;
+use crate::printing::printer;
+use crate::protocol::{
+    recv_msg, send_msg, ConnectionKind, ControlMessage, DisconnectReason, PeerInfo, HOST_PEER_ID,
+};
+use crate::state::{ClientState, DeviceInfo, SessionState, TcpState};
+>>>>>>> d8e3fb5 (Print fature implementation)
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -27,6 +36,7 @@ pub async fn join_network(
     my_listen_port: u16,
     tcp_state: State<'_, Arc<TcpState>>,
 ) -> Result<PeerInfo, String> {
+<<<<<<< HEAD
     let mut socket = TcpStream::connect(&host_addr).await.map_err(|e| e.to_string())?;
     let local_printers = printer::list_local_printers();
 
@@ -38,13 +48,41 @@ pub async fn join_network(
         listen_port: my_listen_port,
         printers: local_printers.clone()
     }).await.map_err(|e| e.to_string())?;
+=======
+    let mut socket = TcpStream::connect(&host_addr)
+        .await
+        .map_err(|e| e.to_string())?;
+    send_msg(&mut socket, &ConnectionKind::Control)
+        .await
+        .map_err(|e| e.to_string())?;
+    send_msg(
+        &mut socket,
+        &ControlMessage::JoinRequest {
+            display_name,
+            device_name: device.name.clone(),
+            code: None,
+            listen_port: my_listen_port,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+>>>>>>> d8e3fb5 (Print fature implementation)
 
     loop {
         match recv_msg::<ControlMessage, _>(&mut socket).await {
             Ok(ControlMessage::JoinPending) => {
                 let _ = app.emit("join-pending", ());
             }
+<<<<<<< HEAD
             Ok(ControlMessage::JoinAccepted { session_name, peer_id, host_device_name, roster ,printers}) => {
+=======
+            Ok(ControlMessage::JoinAccepted {
+                session_name,
+                peer_id,
+                host_device_name,
+                roster,
+            }) => {
+>>>>>>> d8e3fb5 (Print fature implementation)
                 let host_info = PeerInfo {
                     id: HOST_PEER_ID.into(),
                     display_name: "Host".into(),
@@ -115,7 +153,9 @@ pub async fn join_network(
                     let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
                     loop {
                         ticker.tick().await;
-                        if heartbeat_tx.send(ControlMessage::Ping).is_err() { break; }
+                        if heartbeat_tx.send(ControlMessage::Ping).is_err() {
+                            break;
+                        }
                     }
                 });
 
@@ -125,7 +165,19 @@ pub async fn join_network(
                 let session_for_updates = session.inner().clone();
                 let tcp = tcp_state.inner().clone();
                 tokio::spawn(async move {
+<<<<<<< HEAD
                     listen_for_roster_updates(read_half, app, client_for_cleanup, session_for_updates, reply_tx,tcp,local_printers.clone()).await;
+=======
+                    listen_for_roster_updates(
+                        read_half,
+                        app,
+                        client_for_cleanup,
+                        session_for_updates,
+                        reply_tx,
+                        tcp,
+                    )
+                    .await;
+>>>>>>> d8e3fb5 (Print fature implementation)
                     heartbeat.abort();
                 });
 
@@ -142,9 +194,24 @@ pub async fn join_network(
 /// sync as peers come and go, and clears `ClientState` on exit so
 /// `leave_network` doesn't try to send through a connection that's
 /// already gone.
+<<<<<<< HEAD
 async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle, client: Arc<ClientState>, session: Arc<SessionState>, reply_tx: mpsc::UnboundedSender<ControlMessage>,tcp:Arc<TcpState>,printers:Vec<PrinterInfo>) {
+=======
+async fn listen_for_roster_updates(
+    mut read_half: OwnedReadHalf,
+    app: AppHandle,
+    client: Arc<ClientState>,
+    session: Arc<SessionState>,
+    reply_tx: mpsc::UnboundedSender<ControlMessage>,
+    tcp: Arc<TcpState>,
+) {
+>>>>>>> d8e3fb5 (Print fature implementation)
     loop {
-        let received = tokio::time::timeout(HEARTBEAT_TIMEOUT, recv_msg::<ControlMessage, _>(&mut read_half)).await;
+        let received = tokio::time::timeout(
+            HEARTBEAT_TIMEOUT,
+            recv_msg::<ControlMessage, _>(&mut read_half),
+        )
+        .await;
         match received {
             Ok(Ok(ControlMessage::PeerJoined(p))) => {
                 session.touch_peer(HOST_PEER_ID);
@@ -156,7 +223,10 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
                 session.remove_peer(&peer_id);
                 let _ = app.emit("peer-left", (peer_id, reason));
             }
-            Ok(Ok(ControlMessage::Kick { reason })) => { let _ = app.emit("kicked", reason); break; }
+            Ok(Ok(ControlMessage::Kick { reason })) => {
+                let _ = app.emit("kicked", reason);
+                break;
+            }
             Ok(Ok(ControlMessage::Ping)) => {
                 // Same as the host side — reply on the same outbox the
                 // periodic heartbeat task already writes through, making
@@ -165,6 +235,7 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
                 session.touch_peer(HOST_PEER_ID);
                 let _ = reply_tx.send(ControlMessage::Pong);
             }
+<<<<<<< HEAD
             Ok(Ok(ControlMessage::PrinterList {
                 peer_id,
                 printers,
@@ -179,6 +250,16 @@ async fn listen_for_roster_updates(mut read_half: OwnedReadHalf, app: AppHandle,
                 );
 
                 println!("Printer list arm");
+=======
+            Ok(Ok(ControlMessage::PrinterList { peer_id, printers })) => {
+                if session.is_member(&peer_id) {
+                    session.set_peer_printers(&peer_id, printers.clone());
+                    let _ = app.emit(
+                        "peer-printers-updated",
+                        PeerPrintersUpdated { peer_id, printers },
+                    );
+                }
+>>>>>>> d8e3fb5 (Print fature implementation)
             }
             Ok(Ok(_)) => session.touch_peer(HOST_PEER_ID), // Pong, or anything else — any traffic counts as "still alive"
             Ok(Err(_)) | Err(_) => {
@@ -231,7 +312,9 @@ pub fn kick_peer(session: State<'_, Arc<SessionState>>, peer_id: String) {
     session.mark_kicked(&peer_id);
     if let Some(peer) = session.peers.lock().unwrap().get(&peer_id) {
         if let Some(outbox) = &peer.outbox {
-            let _ = outbox.send(ControlMessage::Kick { reason: "Removed by host".into() });
+            let _ = outbox.send(ControlMessage::Kick {
+                reason: "Removed by host".into(),
+            });
         }
     }
 }

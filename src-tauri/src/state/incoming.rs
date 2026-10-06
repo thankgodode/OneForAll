@@ -11,6 +11,20 @@ pub struct PendingIncoming {
 
 impl PendingIncoming {
     pub fn new() -> Self {
-        Self { requests: Mutex::new(HashMap::new()) }
+        Self {
+            requests: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+pub struct PendingPrintJobs {
+    pub requests: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+}
+
+impl PendingPrintJobs {
+    pub fn new() -> Self {
+        Self {
+            requests: Mutex::new(HashMap::new()),
+        }
     }
 }

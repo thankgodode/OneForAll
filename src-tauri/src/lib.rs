@@ -3,14 +3,17 @@ mod db;
 mod events;
 mod mdns;
 mod network;
+mod printing;
 mod protocol;
 mod state;
 mod util;
-mod printing;
 
-use printing::printer;
 use db::Db;
-use state::{AppSettings, ClientState, DeviceInfo, MdnsState, PendingIncoming, SessionState, TcpState};
+use printing::printer;
+use state::{
+    AppSettings, ClientState, DeviceInfo, MdnsState, PendingIncoming, PendingPrintJobs,
+    SessionState, TcpState,
+};
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -33,13 +36,17 @@ pub fn run() {
         .manage(Arc::new(SessionState::new("My Network")))
         .manage(Arc::new(TcpState::new()))
         .manage(Arc::new(PendingIncoming::new()))
+        .manage(Arc::new(PendingPrintJobs::new()))
         .manage(Arc::new(ClientState::new()))
         // Db and AppSettings (which loads FROM Db) both need a real
         // filesystem path from Tauri's path resolver, which only exists
         // once the app has actually started — hence .setup() rather than
         // a plain .manage() call alongside everything above.
         .setup(move |app| {
-            let data_dir = app.path().app_data_dir().expect("no app data directory available");
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("no app data directory available");
             std::fs::create_dir_all(&data_dir).expect("failed to create app data directory");
             let db_path = data_dir.join("nearby.db");
 
@@ -90,6 +97,8 @@ pub fn run() {
             // printers
             printer::get_local_printers,
             state::p_state::get_remote_printers,
+            printing::jobs::send_print_job,
+            printing::jobs::respond_to_print_job,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

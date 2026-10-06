@@ -22,6 +22,9 @@ import { listen } from "@tauri-apps/api/event";
 //   transfer-failed                     (transferId: string, reason: string)
 //   transfer-cancelled                   transferId: string
 //   transfer-rejected                     transferId: string
+//   incoming-print-job                    IncomingPrintJob
+//   print-job-status                      PrintJobUpdate
+//   peer-printers-updated                 { peerId, printers }
 //
 // Subscribes to all of them and routes each to the matching handler in
 // `handlers` (any event without a handler is just ignored). Returns a
@@ -46,6 +49,9 @@ export async function subscribeToBackendEvents(handlers) {
     ["transfer-failed", ([transferId, reason]) => handlers.onTransferFailed?.(transferId, reason)],
     ["transfer-cancelled", (transferId) => handlers.onTransferCancelled?.(transferId)],
     ["transfer-rejected", (transferId) => handlers.onTransferRejected?.(transferId)],
+    ["incoming-print-job", (job) => handlers.onIncomingPrintJob?.(job)],
+    ["print-job-status", (job) => handlers.onPrintJobStatus?.(job)],
+    ["peer-printers-updated", (update) => handlers.onPeerPrintersUpdated?.(update)],
   ];
 
   const unlistens = await Promise.all(

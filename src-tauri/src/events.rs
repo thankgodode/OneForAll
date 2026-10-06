@@ -2,7 +2,7 @@
 //! here so `network::send` and `network::receive` share one definition
 //! instead of two structurally-identical structs drifting apart over time.
 
-use crate::protocol::PeerInfo;
+use crate::{printing::printer::PrinterInfo, protocol::PeerInfo};
 use serde::Serialize;
 
 // Same reasoning as PeerInfo in protocol.rs: these get serde_json'd
@@ -26,6 +26,13 @@ pub struct IncomingFileRequest {
     pub filename: String,
     pub size: u64,
     pub from: PeerInfo,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerPrintersUpdated {
+    pub peer_id: String,
+    pub printers: Vec<PrinterInfo>,
 }
 
 /// Fired exactly once per transfer, on both directions, right before

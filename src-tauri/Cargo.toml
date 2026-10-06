@@ -3,6 +3,9 @@ name = "nearby-backend"
 version = "0.1.0"
 edition = "2021"
 
+[profile.dev]
+debug = "line-tables-only"
+
 # This is the src-tauri crate — pair it with the frontend project from
 # earlier in the conversation. Versions below are illustrative; run
 # `cargo update` and check crates.io for current majors before building.
