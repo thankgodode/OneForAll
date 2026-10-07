@@ -42,3 +42,4 @@ dirs = "5"
 # synchronous rusqlite API is used directly rather than reaching for an
 # async driver; see db.rs for the one caveat that comes with that choice.
 rusqlite = { version = "0.31", features = ["bundled"] }
+printers = "2.3.0"
