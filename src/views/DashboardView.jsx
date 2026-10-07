@@ -33,7 +33,7 @@ function StatusStrip({ online, active, jobs, network }) {
 export default function DashboardView({ devices, transfers, printJobs, network, setView }) {
   const online = devices.filter((d) => !d.isSelf && d.status !== "offline").length;
   const active = transfers.filter((t) => t.status === "active").length;
-  const jobs = printJobs.filter((p) => p.status === "printing" || p.status === "pending").length;
+  const jobs = printJobs.filter((p) => ["pending", "sending", "receiving", "printing"].includes(p.status)).length;
 
   return (
     <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 14 }}>

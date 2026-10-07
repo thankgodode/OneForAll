@@ -15,7 +15,8 @@ import { listen } from "@tauri-apps/api/event";
 //   kicked                       reason: string
 //   disconnected-from-network     reason: "left" | "kicked" | "timedOut" (always "timedOut" in practice — see backend)
 //   incoming-file-request           IncomingFileRequest (includes printerName for print jobs)
-//   transfer-started                  { transferId, peerId, peerName, filename, size, direction, printerName? }
+//   print-job-status                  { transferId, status, error? }
+//   transfer-started                  { transferId, peerId, peerName, filename, size, direction }
 //   transfer-resumed                   (transferId: string, resumedFromBytes: number)
 //   transfer-progress                 TransferProgress
 //   transfer-completed                 (transferId: string, destPath: string)
@@ -39,6 +40,7 @@ export async function subscribeToBackendEvents(handlers) {
     ["kicked", (reason) => handlers.onKicked?.(reason)],
     ["disconnected-from-network", (reason) => handlers.onDisconnected?.(reason)],
     ["incoming-file-request", (req) => handlers.onIncomingFileRequest?.(req)],
+    ["print-job-status", (status) => handlers.onPrintJobStatus?.(status)],
     ["transfer-started", (t) => handlers.onTransferStarted?.(t)],
     ["transfer-resumed", ([transferId, resumedFromBytes]) => handlers.onTransferResumed?.(transferId, resumedFromBytes)],
     ["transfer-progress", (progress) => handlers.onTransferProgress?.(progress)],

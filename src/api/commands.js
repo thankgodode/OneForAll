@@ -54,8 +54,8 @@ export const kickPeer = (peerId) => invoke("kick_peer", { peerId });
 // --- transfers ---
 export const sendFileToPeers = (myPeerId, filePath, targetPeerIds) =>
   invoke("send_file_to_peers", { myPeerId, filePath, targetPeerIds });
-export const sendPrintJob = (myPeerId, filePath, targetPeerId, printerName) =>
-  invoke("send_print_job", { myPeerId, filePath, targetPeerId, printerName });
+export const sendPrintJob = (myPeerId, filePath, targetPeerId, printerName, copies, transferId) =>
+  invoke("send_print_job", { myPeerId, filePath, targetPeerId, printerName, copies, transferId });
 export const respondToIncomingFile = (transferId, accept) =>
   invoke("respond_to_incoming_file", { transferId, accept });
 export const cancelTransfer = (transferId) => invoke("cancel_transfer", { transferId });
