@@ -25,7 +25,7 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
         ConnectionKind::Control => {
             handle_control_connection(socket, addr, ctx.session, ctx.device, ctx.tcp, app).await;
         }
-        ConnectionKind::Transfer { peer_id, transfer_id, filename, size, printer_name } => {
+        ConnectionKind::Transfer { peer_id, transfer_id, filename, size, printer_name, copies } => {
             // The membership check happens here, before a single byte of
             // file data is read. This is the actual enforcement point —
             // the UI only offering joined peers as recipients is what
@@ -35,7 +35,7 @@ pub async fn handle_connection(mut socket: TcpStream, addr: SocketAddr, ctx: App
             let Some(from_peer) = ctx.session.peer_info(&peer_id) else { return };
             receive_incoming_transfer(
                 socket, transfer_id, filename, size, from_peer,
-                ctx.settings, ctx.pending_incoming, ctx.tcp, ctx.db, printer_name, app,
+                ctx.settings, ctx.pending_incoming, ctx.tcp, ctx.db, printer_name, copies, app,
             ).await;
         }
         ConnectionKind::ResumeTransfer { peer_id, transfer_id } => {

@@ -9,6 +9,7 @@ import { fmtBytes } from "../utils/format";
 export default function PrintView({ devices, printJobs, onPrint, toast }) {
   const [doc, setDoc] = useState(null);
   const [target, setTarget] = useState(null);
+  const [copies, setCopies] = useState("1");
   const printers = devices
     .filter((device) => device.hasPrinter && !device.isSelf && device.status !== "offline")
     .flatMap((device) => device.printerNames.map((printerName) => ({ device, printerName })));
@@ -25,17 +26,18 @@ export default function PrintView({ devices, printJobs, onPrint, toast }) {
   };
 
   const submit = async () => {
-    if (!doc || !target) return;
+    if (!doc || !target || !validCopies) return;
     const printer = printers.find(({ device, printerName }) => `${device.id}:${printerName}` === target);
     if (!printer) return;
     try {
-      await onPrint(doc, printer.device, printer.printerName);
+      await onPrint(doc, printer.device, printer.printerName, Number(copies));
       setDoc(null);
       setTarget(null);
     } catch (error) {
       toast(`Couldn't send print job: ${error}`, true);
     }
   };
+  const validCopies = Number.isSafeInteger(Number(copies)) && Number(copies) > 0 && Number(copies) <= 0xFFFFFFFF;
 
   return (
     <div className="fade-up" style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -77,7 +79,21 @@ export default function PrintView({ devices, printJobs, onPrint, toast }) {
           </div>
         </div>
 
-        <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={!doc || !target} onClick={submit}>
+        <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 12, color: "var(--text-secondary)" }}>
+          Number of copies
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={copies}
+            onChange={(event) => setCopies(event.target.value)}
+            aria-label="Number of copies"
+            style={{ width: 88, padding: "7px 9px", color: "var(--text-primary)", background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
+          />
+        </label>
+        {!validCopies && <div style={{ fontSize: 11, color: "var(--red)" }}>Enter a whole number greater than zero.</div>}
+
+        <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={!doc || !target || !validCopies} onClick={submit}>
           <Printer size={14} /> Send print job
         </button>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>The receiving device will ask before sending the document to its printer.</div>
@@ -91,11 +107,13 @@ export default function PrintView({ devices, printJobs, onPrint, toast }) {
             return (
               <div key={job.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "var(--bg-elevated)", borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}>
                 <div style={{ width: 30, height: 30, borderRadius: 8, background: `${meta.color}1A`, color: meta.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  {job.status === "printing" ? <Loader2 size={14} /> : <Printer size={14} />}
+                  {["sending", "receiving", "printing"].includes(job.status) ? <Loader2 size={14} /> : <Printer size={14} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job.file}</div>
-                  <div style={{ fontSize: 11, color: job.error ? "var(--red)" : "var(--text-tertiary)" }}>{job.error || `${job.target} · ${job.printer}`}</div>
+                  <div style={{ fontSize: 11, color: job.error ? "var(--red)" : "var(--text-tertiary)" }}>
+                    {job.error || `${job.target} · ${job.printer} · ${job.copies} ${job.copies === 1 ? "copy" : "copies"}`}
+                  </div>
                 </div>
                 <span className="chip" style={{ background: `${meta.color}1A`, color: meta.color }}>{meta.label}</span>
               </div>

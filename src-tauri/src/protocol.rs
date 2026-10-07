@@ -49,6 +49,7 @@ pub enum ConnectionKind {
         filename: String,
         size: u64,
         printer_name: Option<String>,
+        copies: Option<u32>,
     },
     /// Reconnecting to continue a transfer that was interrupted, not
     /// started fresh — no filename/size needed, since the receiver
@@ -108,6 +109,13 @@ pub enum PrintResponse {
         job_id: String,
         reason: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintJobResult {
+    pub success: bool,
+    pub error: Option<String>,
 }
 
 /// The receiver's answer to `ConnectionKind::ResumeTransfer` — how many

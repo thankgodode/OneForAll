@@ -253,6 +253,7 @@ export default function App() {
               file: req.filename,
               target: "This device",
               printer: req.printerName,
+              copies: req.copies ?? 1,
               status: "pending",
               direction: "receive",
             }, ...prev]);
@@ -277,21 +278,6 @@ export default function App() {
               ...prev,
             ]
           ));
-          if (t.printerName) {
-            setPrintJobs((prev) => {
-              const job = {
-                id: t.transferId,
-                file: t.filename,
-                target: t.direction === "send" ? t.peerName : "This device",
-                printer: t.printerName,
-                status: t.direction === "send" ? "pending" : "printing",
-                direction: t.direction,
-              };
-              return prev.some((item) => item.id === t.transferId)
-                ? prev.map((item) => item.id === t.transferId ? { ...item, ...job } : item)
-                : [job, ...prev];
-            });
-          }
         },
         // Fires on both a successful reconnect-and-continue AND (should
         // it ever arrive for a row that isn't already in state) a
@@ -320,21 +306,20 @@ export default function App() {
         },
         onTransferCompleted: (transferId) => {
           updateTransfer(transferId, { status: "completed", progress: 100 });
-          setPrintJobs((prev) => prev.map((job) => job.id === transferId
-            ? { ...job, status: job.direction === "send" ? "sent" : "completed" }
-            : job));
         },
         onTransferFailed: (transferId, reason) => {
           updateTransfer(transferId, { status: "failed", error: reason });
-          setPrintJobs((prev) => prev.map((job) => job.id === transferId ? { ...job, status: "failed", error: reason } : job));
         },
         onTransferCancelled: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Cancelled" });
-          setPrintJobs((prev) => prev.map((job) => job.id === transferId ? { ...job, status: "failed" } : job));
         },
         onTransferRejected: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Rejected by recipient" });
-          setPrintJobs((prev) => prev.map((job) => job.id === transferId ? { ...job, status: "rejected" } : job));
+        },
+        onPrintJobStatus: ({ transferId, status, error }) => {
+          setPrintJobs((prev) => prev.map((job) => job.id === transferId
+            ? { ...job, status, error: error ?? undefined }
+            : job));
         },
       });
 
@@ -366,7 +351,7 @@ export default function App() {
     setModal({
       title: req.printerName ? `Print job: ${req.filename}` : `Incoming file: ${req.filename}`,
       body: req.printerName
-        ? `${req.from?.displayName || "Someone"} wants to send ${req.filename} (${fmtBytes(req.size)}) to print on ${req.printerName}.`
+        ? `${req.from?.displayName || "Someone"} wants to send ${req.filename} (${fmtBytes(req.size)}) to print ${req.copies ?? 1} ${req.copies === 1 || req.copies === undefined || req.copies === null ? "copy" : "copies"} on ${req.printerName}.`
         : `${req.from?.displayName || "Someone"} wants to send you ${fmtBytes(req.size)}.`,
       confirmLabel: "Accept",
       onConfirm: () => resolve(true),
@@ -439,17 +424,26 @@ export default function App() {
 
   /* ---------------- printing ---------------- */
 
-  const handlePrint = async (doc, target, printerName) => {
+  const handlePrint = async (doc, target, printerName, copies) => {
     if (!network.myPeerId) throw new Error("Join or host a network before sending print jobs");
-    const id = await api.sendPrintJob(network.myPeerId, doc.path, target.id, printerName);
+    const id = crypto.randomUUID();
     setPrintJobs((prev) => prev.some((job) => job.id === id) ? prev : [{
       id,
       file: doc.name,
       target: target.name,
       printer: printerName,
+      copies,
       status: "pending",
       direction: "send",
     }, ...prev]);
+    try {
+      await api.sendPrintJob(network.myPeerId, doc.path, target.id, printerName, copies, id);
+    } catch (error) {
+      setPrintJobs((prev) => prev.map((job) => job.id === id
+        ? { ...job, status: "failed", error: String(error) }
+        : job));
+      throw error;
+    }
     toast(`Print job sent to ${target.name} (${printerName})`);
   };
 

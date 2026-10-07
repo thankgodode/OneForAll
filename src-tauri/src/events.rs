@@ -27,6 +27,15 @@ pub struct IncomingFileRequest {
     pub size: u64,
     pub from: PeerInfo,
     pub printer_name: Option<String>,
+    pub copies: Option<u32>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintJobStatus {
+    pub transfer_id: String,
+    pub status: &'static str,
+    pub error: Option<String>,
 }
 
 /// Fired exactly once per transfer, on both directions, right before

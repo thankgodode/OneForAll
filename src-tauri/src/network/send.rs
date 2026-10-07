@@ -1,7 +1,7 @@
 use crate::db::{Db, IncompleteTransfer};
 use crate::events::{TransferProgress, TransferStarted};
 use crate::network::TRANSFER_CHUNK_SIZE;
-use crate::protocol::{recv_msg, send_msg, ConnectionKind, PeerInfo, ResumeOffset};
+use crate::protocol::{recv_msg, send_msg, ConnectionKind, PeerInfo, PrintJobResult, ResumeOffset};
 use crate::state::{SessionState, TcpState, TransferHandle};
 use std::io::SeekFrom;
 use std::path::Path;
@@ -43,7 +43,7 @@ pub async fn send_file_to_peers(
         let db = db.inner().clone();
 
         joins.push(tokio::spawn(async move {
-            send_one_file(app, tcp_state, db, file_path, target, my_peer_id, None, None).await;
+            send_one_file(app, tcp_state, db, file_path, target, my_peer_id, None, None, None).await;
         }));
     }
 
@@ -61,7 +61,12 @@ pub async fn send_print_job(
     file_path: String,
     target_peer_id: String,
     printer_name: String,
+    copies: u32,
+    transfer_id: String,
 ) -> Result<String, String> {
+    if copies == 0 {
+        return Err("Number of copies must be at least 1".into());
+    }
     let target = session.roster().into_iter()
         .find(|peer| peer.id == target_peer_id)
         .ok_or("That device is no longer connected")?;
@@ -69,7 +74,6 @@ pub async fn send_print_job(
         return Err("That printer is no longer available on the selected device".into());
     }
 
-    let transfer_id = uuid::Uuid::new_v4().to_string();
     tokio::spawn(send_one_file(
         app,
         tcp_state.inner().clone(),
@@ -78,6 +82,7 @@ pub async fn send_print_job(
         target,
         my_peer_id,
         Some(printer_name),
+        Some(copies),
         Some(transfer_id.clone()),
     ));
     Ok(transfer_id)
@@ -91,12 +96,13 @@ async fn send_one_file(
     target: PeerInfo,
     my_peer_id: String,
     printer_name: Option<String>,
+    copies: Option<u32>,
     supplied_transfer_id: Option<String>,
 ) {
     let transfer_id = supplied_transfer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let Ok(metadata) = tokio::fs::metadata(&*file_path).await else {
-        let _ = app.emit("transfer-failed", (&transfer_id, "File no longer exists"));
+        emit_send_failure(&app, &transfer_id, printer_name.is_some(), "File no longer exists");
         return;
     };
     let filename = Path::new(&*file_path)
@@ -110,27 +116,30 @@ async fn send_one_file(
     // `events::TransferStarted`). If the connection below fails, the row
     // this creates is what `transfer-failed` then updates, rather than
     // there being no row to update at all.
-    let _ = app.emit("transfer-started", TransferStarted {
-        transfer_id: transfer_id.clone(),
-        peer_id: target.id.clone(),
-        peer_name: target.display_name.clone(),
-        filename: filename.clone(),
-        size,
-        direction: "send",
-        printer_name: printer_name.clone(),
-    });
+    if printer_name.is_none() {
+        let _ = app.emit("transfer-started", TransferStarted {
+            transfer_id: transfer_id.clone(),
+            peer_id: target.id.clone(),
+            peer_name: target.display_name.clone(),
+            filename: filename.clone(),
+            size,
+            direction: "send",
+            printer_name: None,
+        });
+    }
 
     let Ok(mut socket) = TcpStream::connect(&target.addr).await else {
-        let _ = app.emit("transfer-failed", (&transfer_id, "Connection failed"));
+        emit_send_failure(&app, &transfer_id, printer_name.is_some(), "Connection failed");
         return;
     };
 
     let sent_header = send_msg(&mut socket, &ConnectionKind::Transfer {
         peer_id: my_peer_id, transfer_id: transfer_id.clone(), filename: filename.clone(), size,
         printer_name: printer_name.clone(),
+        copies,
     }).await;
     if sent_header.is_err() {
-        let _ = app.emit("transfer-failed", (&transfer_id, "Failed to start transfer"));
+        emit_send_failure(&app, &transfer_id, printer_name.is_some(), "Failed to start transfer");
         return;
     }
 
@@ -138,14 +147,15 @@ async fn send_one_file(
         match recv_msg::<bool, _>(&mut socket).await {
             Ok(true) => {}
             Ok(false) => {
-                let _ = app.emit("transfer-rejected", &transfer_id);
+                emit_print_status(&app, &transfer_id, "rejected", None);
                 return;
             }
             Err(_) => {
-                let _ = app.emit("transfer-failed", (&transfer_id, "Print job approval connection was lost"));
+                emit_print_status(&app, &transfer_id, "failed", Some("Print job approval connection was lost".into()));
                 return;
             }
         }
+        emit_print_status(&app, &transfer_id, "sending", None);
     }
 
     // Persisted only once the connection genuinely succeeded and
@@ -168,8 +178,26 @@ async fn send_one_file(
 
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();
-    let task = tokio::spawn(stream_from_disk(socket, (*file_path).clone(), transfer_id.clone(), size, 0, app.clone(), cancel.clone(), peer_gone.clone(), db.clone()));
+    let task = tokio::spawn(stream_from_disk(
+        socket, (*file_path).clone(), transfer_id.clone(), size, 0, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(), printer_name.is_some(),
+    ));
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: target.id, task, cancel, peer_gone });
+}
+
+fn emit_send_failure(app: &AppHandle, transfer_id: &str, is_print_job: bool, reason: &str) {
+    if is_print_job {
+        emit_print_status(app, transfer_id, "failed", Some(reason.to_owned()));
+    } else {
+        let _ = app.emit("transfer-failed", (transfer_id, reason));
+    }
+}
+
+pub(crate) fn emit_print_status(app: &AppHandle, transfer_id: &str, status: &'static str, error: Option<String>) {
+    let _ = app.emit("print-job-status", crate::events::PrintJobStatus {
+        transfer_id: transfer_id.to_owned(),
+        status,
+        error,
+    });
 }
 
 /// Reconnects to continue a transfer that was interrupted. Looked up by
@@ -232,7 +260,7 @@ async fn resume_one_file(app: AppHandle, tcp_state: Arc<TcpState>, db: Arc<Db>, 
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_from_disk(
-        socket, record.file_path, transfer_id.clone(), record.total_size, offset.bytes_received, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(),
+        socket, record.file_path, transfer_id.clone(), record.total_size, offset.bytes_received, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(), false,
     ));
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: target.id, task, cancel, peer_gone });
 }
@@ -281,7 +309,7 @@ pub async fn serve_resume_request(
     let cancel = CancellationToken::new();
     let peer_gone = CancellationToken::new();
     let task = tokio::spawn(stream_from_disk(
-        socket, record.file_path, transfer_id.clone(), record.total_size, bytes_already_have, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(),
+        socket, record.file_path, transfer_id.clone(), record.total_size, bytes_already_have, app.clone(), cancel.clone(), peer_gone.clone(), db.clone(), false,
     ));
     tcp_state.active_transfers.lock().unwrap().insert(transfer_id, TransferHandle { peer_id: from_peer.id, task, cancel, peer_gone });
 }
@@ -296,9 +324,10 @@ async fn stream_from_disk(
     cancel: CancellationToken,
     peer_gone: CancellationToken,
     db: Arc<Db>,
+    is_print_job: bool,
 ) {
     let Ok(mut file) = File::open(&file_path).await else {
-        let _ = app.emit("transfer-failed", (&transfer_id, "Could not reopen file"));
+        emit_send_failure(&app, &transfer_id, is_print_job, "Could not reopen file");
         return;
     };
     if starting_sent > 0 {
@@ -332,7 +361,7 @@ async fn stream_from_disk(
             socket.write_all(&buf[..n]).await?;
             sent += n as u64;
 
-            if last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL || sent >= size {
+            if !is_print_job && (last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL || sent >= size) {
                 let elapsed = start.elapsed().as_secs_f64().max(0.001);
                 let _ = app.emit("transfer-progress", TransferProgress {
                     transfer_id: transfer_id.clone(),
@@ -349,24 +378,54 @@ async fn stream_from_disk(
 
     match result {
         Ok(()) if sent == size => {
-            let _ = db.remove_incomplete_transfer(&transfer_id);
-            let _ = app.emit("transfer-completed", (&transfer_id, ()));
+            if is_print_job {
+                match recv_msg::<PrintJobResult, _>(&mut socket).await {
+                    Ok(result) if result.success => emit_print_status(&app, &transfer_id, "completed", None),
+                    Ok(result) => emit_print_status(
+                        &app,
+                        &transfer_id,
+                        "failed",
+                        result.error.or_else(|| Some("The printer rejected the job".into())),
+                    ),
+                    Err(error) => emit_print_status(
+                        &app,
+                        &transfer_id,
+                        "failed",
+                        Some(format!("Lost the printer's result: {error}")),
+                    ),
+                }
+            } else {
+                let _ = db.remove_incomplete_transfer(&transfer_id);
+                let _ = app.emit("transfer-completed", (&transfer_id, ()));
+            }
         }
         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
             // Explicit user cancel — true abandonment.
-            let _ = db.remove_incomplete_transfer(&transfer_id);
-            let _ = app.emit("transfer-cancelled", &transfer_id);
+            if is_print_job {
+                emit_print_status(&app, &transfer_id, "failed", Some("Print job cancelled".into()));
+            } else {
+                let _ = db.remove_incomplete_transfer(&transfer_id);
+                let _ = app.emit("transfer-cancelled", &transfer_id);
+            }
         }
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut =>{
-            let _ = app.emit("transfer-cancelled", &transfer_id);
-            let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
+            if is_print_job {
+                emit_print_status(&app, &transfer_id, "failed", Some("Connection lost while sending print job".into()));
+            } else {
+                let _ = app.emit("transfer-cancelled", &transfer_id);
+                let _ = app.emit("transfer-failed",(&transfer_id,"Connection lost — the transfer can be resumed once reconnected"));
+            }
         }
         _ => {
             // Covers both an ordinary connection-lost failure AND the
             // peer_gone case above — kept resumable on purpose; see the
             // matching note in receive.rs.
-            let _ = db.mark_transfer_interrupted(&transfer_id, now_unix());
-            let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
+            if is_print_job {
+                emit_print_status(&app, &transfer_id, "failed", Some("Connection lost while sending print job".into()));
+            } else {
+                let _ = db.mark_transfer_interrupted(&transfer_id, now_unix());
+                let _ = app.emit("transfer-failed", (&transfer_id, "Connection lost — the transfer can be resumed once reconnected"));
+            }
         }
     }
 }
