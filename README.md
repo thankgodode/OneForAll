@@ -4,7 +4,7 @@ This template should help get you started developing with Tauri and React in Vit
 
 ## Printing
 
-Print jobs are sent to a connected peer's installed printer queue. The receiver must approve each print job before the document is transferred and printed. On Windows, installed queues are read from the Windows printer service; on macOS and Linux, CUPS (`lpstat` and `lp`) is used. Printing relies on the receiving system's registered print handler for the selected document type.
+Print jobs are sent to a connected peer's installed printer queue using the Rust `printers` crate. The receiver must approve each print job before the document is transferred and printed. The crate uses Windows Print Spooler on Windows and CUPS on Unix-like systems.
 
 ## Recommended IDE Setup
 
