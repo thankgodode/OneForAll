@@ -43,3 +43,4 @@ dirs = "5"
 # async driver; see db.rs for the one caveat that comes with that choice.
 rusqlite = { version = "0.31", features = ["bundled"] }
 printers = "2.3.0"
+printpdf = { version = "0.8.2", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
