@@ -1,7 +1,8 @@
+#[cfg(target_os = "windows")]
+use std::process::Command;
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 pub async fn print_file(path: &Path, printer: &str, copies: u32) -> Result<(), String> {
@@ -36,8 +37,7 @@ fn print_file_blocking(path: &Path, printer_name: &str, copies: u32) -> Result<(
                 convert_image_to_pdf(path, &output)?;
                 output
             }
-            (PrintableFormat::Office, Some(dir)) => convert_with_libreoffice(path, dir)?,
-            (PrintableFormat::PostScript, Some(dir)) => convert_with_ghostscript(path, dir)?,
+            (PrintableFormat::Office, Some(dir)) => convert_with_office2pdf(path, dir)?,
             _ => return Err("Could not prepare the document for printing".into()),
         };
 
@@ -153,126 +153,87 @@ fn raw_image_pdf_bytes(image: printpdf::RawImage) -> Result<Vec<u8>, String> {
         .save(&PdfSaveOptions::default(), &mut Vec::new()))
 }
 
-fn convert_with_libreoffice(input: &Path, output_dir: &Path) -> Result<PathBuf, String> {
-    let executable = find_program(
-        &["soffice", "libreoffice"],
-        &libreoffice_install_paths(),
-    )
-    .ok_or_else(|| {
-        "This document format requires LibreOffice on the receiving device. Install LibreOffice and try again.".to_string()
-    })?;
-    let profile = output_dir.join("libreoffice-profile");
-    let profile_url = file_url(&profile);
-    let output = Command::new(&executable)
-        .args([
-            "--headless",
-            "--nologo",
-            "--nodefault",
-            "--nolockcheck",
-            "--norestore",
-        ])
-        .arg(format!("-env:UserInstallation={profile_url}"))
-        .args(["--convert-to", "pdf", "--outdir"])
-        .arg(output_dir)
-        .arg(input)
-        .output()
-        .map_err(|error| format!("Couldn't start LibreOffice: {error}"))?;
-    if !output.status.success() {
-        return Err(command_error("LibreOffice conversion", &output));
-    }
-
-    let output_path = output_dir.join(
-        input
-            .file_stem()
-            .ok_or_else(|| "The document filename has no name".to_string())?
-            .to_string_lossy()
-            .to_string()
-            + ".pdf",
-    );
-    if !output_path.is_file() {
-        return Err("LibreOffice completed without creating a PDF".into());
-    }
-    Ok(output_path)
-}
-
-fn convert_with_ghostscript(input: &Path, output_dir: &Path) -> Result<PathBuf, String> {
-    let executable = find_program(&ghostscript_programs(), &[])
+fn convert_with_office2pdf(input: &Path, output_dir: &Path) -> Result<PathBuf, String> {
+    let format = input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(office2pdf::config::Format::from_extension)
         .ok_or_else(|| {
-            "PostScript printing requires Ghostscript on the receiving device. Install Ghostscript and try again.".to_string()
+            format!(
+                "office2pdf supports DOCX, XLSX, and PPTX, not '{}'",
+                input
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or("unknown")
+            )
         })?;
-    let output_path = output_dir.join("print.pdf");
-    let output = Command::new(executable)
-        .args(["-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pdfwrite"])
-        .arg(format!("-sOutputFile={}", output_path.display()))
-        .arg(input)
-        .output()
-        .map_err(|error| format!("Couldn't start Ghostscript: {error}"))?;
-    if !output.status.success() {
-        return Err(command_error("Ghostscript conversion", &output));
-    }
-    if !output_path.is_file() {
-        return Err("Ghostscript completed without creating a PDF".into());
-    }
-    Ok(output_path)
+    let result = office2pdf::convert_bytes(
+        &fs::read(input).map_err(|error| format!("Couldn't read office document: {error}"))?,
+        format,
+        &office2pdf::config::ConvertOptions::default(),
+    )
+    .map_err(|error| format!("Office document conversion failed: {error}"))?;
+    let output = output_dir.join("print.pdf");
+    fs::write(&output, result.pdf)
+        .map_err(|error| format!("Couldn't save converted office document: {error}"))?;
+    Ok(output)
 }
 
+#[cfg(target_os = "windows")]
+fn print_pdf(path: &Path, printer_name: &str, copies: u32) -> Result<(), String> {
+    let gs_exe = find_program(&ghostscript_programs(), &[])
+        .ok_or_else(|| "Ghostscript is required to print on Windows".to_string())?;
+
+    let mut cmd = Command::new(gs_exe);
+
+    cmd.args(["-dBATCH", "-dNOPAUSE", "-dQUIET", "-dNoCancel"])
+        .arg("-sDEVICE=mswinpr2")
+        .args(["-dFIXEDMEDIA", "-dPDFFitPage"])
+        .arg(format!("-dNumCopies={}", copies));
+
+    // Rust quotes the whole argument for you, so printer names with spaces are fine.
+    cmd.arg(format!("-sOutputFile=%printer%{}", printer_name))
+        .arg(path);
+
+    // Don't flash a console window
+    // cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to launch gs: {e}"))?;
+
+    if out.status.success() {
+        Ok(())
+    } else {
+        return Err(format!(
+            "ghostscript exited with {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 fn print_pdf(path: &Path, printer_name: &str, copies: u32) -> Result<(), String> {
     let printer = printers::get_printer_by_name(printer_name)
         .ok_or_else(|| format!("Printer '{printer_name}' is no longer available"))?;
-
-    #[cfg(target_os = "windows")]
-    {
-        let executable = find_program(&["SumatraPDF.exe", "SumatraPDF"], &sumatra_install_paths())
-            .ok_or_else(|| {
-                "PDF printing on Windows requires SumatraPDF on the receiving device. Install SumatraPDF and try again.".to_string()
-            })?;
-        let output = Command::new(executable)
-            .args(["-print-to", printer.system_name.as_str(), "-print-settings"])
-            .arg(format!("{copies}x"))
-            .arg("-silent")
-            .arg(path)
-            .output()
-            .map_err(|error| format!("Couldn't start SumatraPDF: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(command_error("SumatraPDF printing", &output))
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let path = path.to_string_lossy().into_owned();
-        let copies = copies.to_string();
-        let raw_properties = [("copies", copies.as_str())];
-        printer
-            .print_file(
-                &path,
-                printers::common::base::job::PrinterJobOptions {
-                    name: None,
-                    raw_properties: &raw_properties,
-                    converter: printers::common::converters::Converter::None,
-                },
-            )
-            .map(|_| ())
-            .map_err(|error| error.message)
-    }
+    let path = path.to_string_lossy().into_owned();
+    let copies = copies.to_string();
+    let raw_properties = [("copies", copies.as_str())];
+    printer
+        .print_file(
+            &path,
+            printers::common::base::job::PrinterJobOptions {
+                name: None,
+                raw_properties: &raw_properties,
+                converter: printers::common::converters::Converter::None,
+            },
+        )
+        .map(|_| ())
+        .map_err(|error| error.message)
 }
 
-fn command_error(operation: &str, output: &std::process::Output) -> String {
-    let details = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let code = output
-        .status
-        .code()
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "terminated by signal".into());
-    if details.is_empty() {
-        format!("{operation} failed (exit code {code})")
-    } else {
-        format!("{operation} failed (exit code {code}): {details}")
-    }
-}
-
+#[cfg(target_os = "windows")]
 fn find_program(names: &[&str], extra_paths: &[PathBuf]) -> Option<PathBuf> {
     if let Some(path) = env::var_os("PATH") {
         for directory in env::split_paths(&path) {
@@ -287,73 +248,14 @@ fn find_program(names: &[&str], extra_paths: &[PathBuf]) -> Option<PathBuf> {
     extra_paths.iter().find(|path| path.is_file()).cloned()
 }
 
-fn libreoffice_install_paths() -> Vec<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        return [
-            env::var_os("ProgramFiles"),
-            env::var_os("ProgramFiles(x86)"),
-        ]
-        .into_iter()
-        .flatten()
-        .map(|root| PathBuf::from(root).join("LibreOffice/program/soffice.exe"))
-        .collect();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        vec![PathBuf::from(
-            "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-        )]
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Vec::new()
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn sumatra_install_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    for root in [env::var_os("ProgramFiles"), env::var_os("LOCALAPPDATA")]
-        .into_iter()
-        .flatten()
-    {
-        paths.push(PathBuf::from(root).join("SumatraPDF/SumatraPDF.exe"));
-    }
-    paths
-}
-
 #[cfg(target_os = "windows")]
 fn ghostscript_programs() -> [&'static str; 2] {
     ["gswin64c.exe", "gswin32c.exe"]
 }
 
-#[cfg(not(target_os = "windows"))]
-fn ghostscript_programs() -> [&'static str; 1] {
-    ["gs"]
-}
-
-fn file_url(path: &Path) -> String {
-    let path = path.to_string_lossy().replace('\\', "/");
-    let path = path
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
-                (byte as char).to_string()
-            }
-            _ => format!("%{byte:02X}"),
-        })
-        .collect::<String>();
-    if path.starts_with('/') {
-        format!("file://{path}")
-    } else {
-        format!("file:///{path}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{classify_format, file_url, raw_image_pdf_bytes, PrintableFormat};
+    use super::{classify_format, raw_image_pdf_bytes, PrintableFormat};
     use printpdf::{RawImage, RawImageData, RawImageFormat};
     use std::path::Path;
 
@@ -397,10 +299,5 @@ mod tests {
         };
         let pdf = raw_image_pdf_bytes(image).unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
-    }
-
-    #[test]
-    fn creates_file_urls_for_paths_with_spaces() {
-        assert_eq!(file_url(Path::new("/tmp/my file")), "file:///tmp/my%20file");
     }
 }
