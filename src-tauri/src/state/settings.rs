@@ -15,6 +15,7 @@ pub struct AppSettings {
     pub display_name: Mutex<String>,
     pub download_dir: Mutex<PathBuf>,
     pub confirm_incoming_files: Mutex<bool>,
+    pub confirm_incoming_printing: Mutex<bool>,
     pub avatar_color: Mutex<String>,
 }
 
@@ -30,12 +31,14 @@ impl AppSettings {
                 display_name: Mutex::new(s.display_name),
                 download_dir: Mutex::new(PathBuf::from(s.download_dir)),
                 confirm_incoming_files: Mutex::new(s.confirm_incoming_files),
+                confirm_incoming_printing: Mutex::new(s.confirm_incoming_printing),
                 avatar_color: Mutex::new(s.avatar_color),
             },
             Err(_) => Self {
                 display_name: Mutex::new(fallback_display_name.to_string()),
                 download_dir: Mutex::new(fallback_download_dir),
                 confirm_incoming_files: Mutex::new(true),
+                confirm_incoming_printing: Mutex::new(true),
                 avatar_color: Mutex::new("#3FDCC4".into()),
             },
         }
@@ -48,6 +51,10 @@ impl AppSettings {
     pub fn require_confirmation(&self) -> bool {
         *self.confirm_incoming_files.lock().unwrap()
     }
+
+    pub fn require_confirm_printing(&self)-> bool{
+        *self.confirm_incoming_printing.lock().unwrap()
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -56,6 +63,7 @@ pub struct SettingsSnapshot {
     pub display_name: String,
     pub download_dir: String,
     pub confirm_incoming_files: bool,
+    pub confirm_incoming_printing: bool,
     pub avatar_color: String,
 }
 
@@ -69,6 +77,7 @@ pub fn get_settings(settings: tauri::State<'_, Arc<AppSettings>>) -> SettingsSna
         display_name: settings.display_name.lock().unwrap().clone(),
         download_dir: settings.download_dir().to_string_lossy().into_owned(),
         confirm_incoming_files: settings.require_confirmation(),
+        confirm_incoming_printing: settings.require_confirm_printing(),
         avatar_color: settings.avatar_color.lock().unwrap().clone(),
     }
 }
@@ -82,6 +91,12 @@ pub fn set_display_name(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri:
 #[tauri::command]
 pub fn set_confirm_incoming_files(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri::State<'_, Arc<Db>>, value: bool) -> Result<(), String> {
     *settings.confirm_incoming_files.lock().unwrap() = value;
+    db.save_confirm_incoming_files(value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_confirm_incoming_printing(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri::State<'_, Arc<Db>>, value: bool) -> Result<(), String> {
+    *settings.confirm_incoming_printing.lock().unwrap() = value;
     db.save_confirm_incoming_files(value).map_err(|e| e.to_string())
 }
 

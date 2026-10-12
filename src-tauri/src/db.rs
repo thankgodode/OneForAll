@@ -27,6 +27,7 @@ pub struct PersistedSettings {
     pub display_name: String,
     pub download_dir: String,
     pub confirm_incoming_files: bool,
+    pub confirm_incoming_printing: bool,
     pub avatar_color: String,
 }
 
@@ -65,6 +66,7 @@ impl Db {
                 display_name TEXT NOT NULL,
                 download_dir TEXT NOT NULL,
                 confirm_incoming_files INTEGER NOT NULL DEFAULT 1,
+                confirm_incoming_printing INTEGER NOT NULL DEFAULT 1,
                 avatar_color TEXT NOT NULL DEFAULT '#3FDCC4'
             );
             CREATE TABLE IF NOT EXISTS incomplete_transfers (
@@ -104,6 +106,7 @@ impl Db {
                 display_name: row.get(0)?,
                 download_dir: row.get(1)?,
                 confirm_incoming_files: row.get::<_, i64>(2)? != 0,
+                confirm_incoming_printing: row.get::<_, i64>(2)? !=0,
                 avatar_color: row.get(3)?,
             }),
         )

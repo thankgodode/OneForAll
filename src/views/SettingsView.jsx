@@ -23,8 +23,10 @@ function SettingsRow({ label, desc, on, onClick }) {
 // and download location, both wired to actual backend commands via
 // `onSetConfirmFiles`/`onSetDownloadDir`. Printing prefs stay mock,
 // matching PrintView, since there's no backend support for printing yet.
-export default function SettingsView({ profile, setProfile, onSetDisplayName, onSetAvatarColor, onSetConfirmFiles, onSetDownloadDir, deviceName, myListenPort, toast }) {
+export default function SettingsView({ profile, setProfile, onSetDisplayName, onSetAvatarColor, onSetConfirmFiles, onSetConfirmPrinting, onSetDownloadDir, deviceName, myListenPort, toast }) {
   const patchGroup = (group, key) => setProfile((p) => ({ ...p, [group]: { ...p[group], [key]: !p[group][key] } }));
+
+  console.log("PROFILE SETTINGS: ", profile);
 
   const pickDownloadDir = async () => {
     const dir = await open({ directory: true });
@@ -102,13 +104,17 @@ export default function SettingsView({ profile, setProfile, onSetDisplayName, on
           on={profile.confirmations.files}
           onClick={() => onSetConfirmFiles(!profile.confirmations.files)}
         />
-        <SettingsRow label="Confirm print jobs" desc="Require approval before printing (not backed by a real setting yet)" on={profile.confirmations.prints} onClick={() => patchGroup("confirmations", "prints")} />
+        <SettingsRow 
+          label="Confirm incoming print jobs" 
+          desc="Require approval before printing" on={profile.confirmations.prints} 
+          onClick={() => onSetConfirmPrinting(!profile.confirmations.prints)} 
+        />
 
         <div className="disp" style={{ fontSize: 13, fontWeight: 600, margin: "18px 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
           <Printer size={15} color="var(--text-tertiary)" /> Printing
         </div>
-        <SettingsRow label="Auto-accept trusted devices" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.autoAccept} onClick={() => patchGroup("printPrefs", "autoAccept")} />
-        <SettingsRow label="Print in background" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.background} onClick={() => patchGroup("printPrefs", "background")} />
+        {/* <SettingsRow label="Auto-accept trusted devices" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.autoAccept} onClick={() => patchGroup("printPrefs", "autoAccept")} />
+        <SettingsRow label="Print in background" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.background} onClick={() => patchGroup("printPrefs", "background")} /> */}
       </div>
 
       <div className="card" style={{ flex: 1, minWidth: 260 }}>

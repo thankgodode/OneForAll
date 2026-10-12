@@ -531,6 +531,11 @@ export default function App() {
     api.setConfirmIncomingFiles(value).catch(() => toast("Failed to save setting", true));
   };
 
+  const handleSetConfirmPrinting = (value) =>{
+    setProfile((p) => ({ ...p, confirmations: { ...p.confirmations, prints: value } }));
+    api.setConfirmIncomingPrinting(value).catch(() => toast("Failed to save setting", true));
+  }
+
   const handleSetDownloadDir = (path) => {
     setProfile((p) => ({ ...p, downloadPath: path }));
     api.setDownloadDir(path).catch(() => toast("Failed to save download location", true));
@@ -600,6 +605,7 @@ export default function App() {
                 onSetDisplayName={handleSetDisplayName}
                 onSetAvatarColor={handleSetAvatarColor}
                 onSetConfirmFiles={handleSetConfirmFiles}
+                onSetConfirmPrinting={handleSetConfirmPrinting}
                 onSetDownloadDir={handleSetDownloadDir}
                 deviceName={deviceName}
                 myListenPort={myListenPort}

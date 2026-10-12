@@ -41,6 +41,7 @@ pub fn run() {
             let data_dir = app.path().app_data_dir().expect("no app data directory available");
             std::fs::create_dir_all(&data_dir).expect("failed to create app data directory");
             let db_path = data_dir.join("nearby.db");
+            println!("DIR: {:?}", db_path);
 
             let default_dir = default_download_dir();
             let db = Db::open(&db_path, &device_info.name, &default_dir.to_string_lossy())
@@ -59,6 +60,7 @@ pub fn run() {
             state::settings::get_settings,
             state::settings::set_display_name,
             state::settings::set_confirm_incoming_files,
+            state::settings::set_confirm_incoming_printing,
             state::settings::set_download_dir,
             state::settings::set_avatar_color,
             // session access control
