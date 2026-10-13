@@ -144,6 +144,7 @@ export default function App() {
           displayName: settings.displayName,
           avatarColor: settings.avatarColor,
           downloadPath: settings.downloadDir,
+          notifications: { ...p.notifications, sound: settings.soundEnabled },
           confirmations: { ...p.confirmations, files: settings.confirmIncomingFiles },
         }));
       } catch {
@@ -568,6 +569,11 @@ export default function App() {
     api.setConfirmIncomingPrinting(value).catch(() => toast("Failed to save setting", true));
   }
 
+  const handleSetSoundEnabled = (value) => {
+    setProfile((p) => ({ ...p, notifications: { ...p.notifications, sound: value } }));
+    api.setSoundEnabled(value).catch(() => toast("Failed to save sound setting", true));
+  };
+
   const handleSetDownloadDir = (path) => {
     setProfile((p) => ({ ...p, downloadPath: path }));
     api.setDownloadDir(path).catch(() => toast("Failed to save download location", true));
@@ -638,6 +644,7 @@ export default function App() {
                 onSetAvatarColor={handleSetAvatarColor}
                 onSetConfirmFiles={handleSetConfirmFiles}
                 onSetConfirmPrinting={handleSetConfirmPrinting}
+                onSetSoundEnabled={handleSetSoundEnabled}
                 onSetDownloadDir={handleSetDownloadDir}
                 deviceName={deviceName}
                 myListenPort={myListenPort}

@@ -16,6 +16,7 @@ pub struct AppSettings {
     pub download_dir: Mutex<PathBuf>,
     pub confirm_incoming_files: Mutex<bool>,
     pub confirm_incoming_printing: Mutex<bool>,
+    pub sound_enabled: Mutex<bool>,
     pub avatar_color: Mutex<String>,
 }
 
@@ -32,6 +33,7 @@ impl AppSettings {
                 download_dir: Mutex::new(PathBuf::from(s.download_dir)),
                 confirm_incoming_files: Mutex::new(s.confirm_incoming_files),
                 confirm_incoming_printing: Mutex::new(s.confirm_incoming_printing),
+                sound_enabled: Mutex::new(s.sound_enabled),
                 avatar_color: Mutex::new(s.avatar_color),
             },
             Err(_) => Self {
@@ -39,6 +41,7 @@ impl AppSettings {
                 download_dir: Mutex::new(fallback_download_dir),
                 confirm_incoming_files: Mutex::new(true),
                 confirm_incoming_printing: Mutex::new(true),
+                sound_enabled: Mutex::new(true),
                 avatar_color: Mutex::new("#3FDCC4".into()),
             },
         }
@@ -55,6 +58,10 @@ impl AppSettings {
     pub fn require_confirm_printing(&self)-> bool{
         *self.confirm_incoming_printing.lock().unwrap()
     }
+
+    pub fn sound_enabled(&self) -> bool {
+        *self.sound_enabled.lock().unwrap()
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -64,6 +71,7 @@ pub struct SettingsSnapshot {
     pub download_dir: String,
     pub confirm_incoming_files: bool,
     pub confirm_incoming_printing: bool,
+    pub sound_enabled: bool,
     pub avatar_color: String,
 }
 
@@ -78,6 +86,7 @@ pub fn get_settings(settings: tauri::State<'_, Arc<AppSettings>>) -> SettingsSna
         download_dir: settings.download_dir().to_string_lossy().into_owned(),
         confirm_incoming_files: settings.require_confirmation(),
         confirm_incoming_printing: settings.require_confirm_printing(),
+        sound_enabled: settings.sound_enabled(),
         avatar_color: settings.avatar_color.lock().unwrap().clone(),
     }
 }
@@ -98,6 +107,13 @@ pub fn set_confirm_incoming_files(settings: tauri::State<'_, Arc<AppSettings>>, 
 pub fn set_confirm_incoming_printing(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri::State<'_, Arc<Db>>, value: bool) -> Result<(), String> {
     *settings.confirm_incoming_printing.lock().unwrap() = value;
     db.save_confirm_incoming_printing(value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_sound_enabled(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri::State<'_, Arc<Db>>, value: bool) -> Result<(), String> {
+    db.save_sound_enabled(value).map_err(|e| e.to_string())?;
+    *settings.sound_enabled.lock().unwrap() = value;
+    Ok(())
 }
 
 #[tauri::command]
