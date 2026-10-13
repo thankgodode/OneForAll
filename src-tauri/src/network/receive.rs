@@ -40,7 +40,12 @@ pub async fn receive_incoming_transfer(
         return;
     }
 
-    if settings.require_confirmation() || printer_name.is_some() {
+    let require_confirmation = if printer_name.is_some() {
+        settings.require_confirm_printing()
+    } else {
+        settings.require_confirmation()
+    };
+    if require_confirmation {
         let (tx, rx) = oneshot::channel();
         pending_incoming.requests.lock().unwrap().insert(transfer_id.clone(), tx);
         let _ = app.emit("incoming-file-request", IncomingFileRequest {
