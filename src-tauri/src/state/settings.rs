@@ -1,6 +1,8 @@
 use crate::db::Db;
+use crate::state::PendingIncoming;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter};
 
 /// User-configurable preferences — the Rust-side mirror of the toggles in
 /// the frontend's Settings view. Read by the transfer code path to decide
@@ -104,9 +106,25 @@ pub fn set_confirm_incoming_files(settings: tauri::State<'_, Arc<AppSettings>>, 
 }
 
 #[tauri::command]
-pub fn set_confirm_incoming_printing(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri::State<'_, Arc<Db>>, value: bool) -> Result<(), String> {
+pub fn set_confirm_incoming_printing(
+    app: AppHandle,
+    settings: tauri::State<'_, Arc<AppSettings>>,
+    pending: tauri::State<'_, Arc<PendingIncoming>>,
+    db: tauri::State<'_, Arc<Db>>,
+    value: bool,
+) -> Result<(), String> {
+    db.save_confirm_incoming_printing(value).map_err(|e| e.to_string())?;
     *settings.confirm_incoming_printing.lock().unwrap() = value;
-    db.save_confirm_incoming_printing(value).map_err(|e| e.to_string())
+
+    if !value {
+        let transfer_ids = pending.accept_pending_print_jobs();
+        if !transfer_ids.is_empty() {
+            app.emit("incoming-print-auto-accepted", transfer_ids)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

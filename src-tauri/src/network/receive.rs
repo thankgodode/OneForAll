@@ -45,18 +45,44 @@ pub async fn receive_incoming_transfer(
     } else {
         settings.require_confirmation()
     };
+    let mut confirmation_rx = None;
+    let mut awaiting_confirmation = false;
     if require_confirmation {
         let (tx, rx) = oneshot::channel();
-        pending_incoming.requests.lock().unwrap().insert(transfer_id.clone(), tx);
+        {
+            let mut requests = pending_incoming.requests.lock().unwrap();
+            let confirmation_still_required = if printer_name.is_some() {
+                settings.require_confirm_printing()
+            } else {
+                settings.require_confirmation()
+            };
+
+            if confirmation_still_required {
+                requests.insert(transfer_id.clone(), crate::state::incoming::PendingIncomingRequest {
+                    responder: tx,
+                    is_print_job: printer_name.is_some(),
+                });
+                confirmation_rx = Some(rx);
+                awaiting_confirmation = true;
+            } else {
+                let _ = tx.send(true);
+            }
+        }
+    }
+
+    if printer_name.is_some() || awaiting_confirmation {
         let _ = app.emit("incoming-file-request", IncomingFileRequest {
             transfer_id: transfer_id.clone(),
             filename: filename.clone(),
             size,
-            from: from_peer.clone(), // cloned — still needed below for transfer-started
+            from: from_peer.clone(),
             printer_name: printer_name.clone(),
             copies,
+            requires_confirmation: awaiting_confirmation,
         });
+    }
 
+    if let Some(rx) = confirmation_rx {
         match rx.await {
             Ok(true) => {}
             _ => {
@@ -345,8 +371,8 @@ fn now_unix() -> i64 {
 /// The frontend's response to an "incoming-file-request" event.
 #[tauri::command]
 pub fn respond_to_incoming_file(pending: State<'_, Arc<PendingIncoming>>, transfer_id: String, accept: bool) {
-    if let Some(tx) = pending.requests.lock().unwrap().remove(&transfer_id) {
-        let _ = tx.send(accept);
+    if let Some(request) = pending.requests.lock().unwrap().remove(&transfer_id) {
+        let _ = request.responder.send(accept);
     }
 }
 

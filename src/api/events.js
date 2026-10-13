@@ -40,6 +40,7 @@ export async function subscribeToBackendEvents(handlers) {
     ["kicked", (reason) => handlers.onKicked?.(reason)],
     ["disconnected-from-network", (reason) => handlers.onDisconnected?.(reason)],
     ["incoming-file-request", (req) => handlers.onIncomingFileRequest?.(req)],
+    ["incoming-print-auto-accepted", (transferIds) => handlers.onIncomingPrintAutoAccepted?.(transferIds)],
     ["print-job-status", (status) => handlers.onPrintJobStatus?.(status)],
     ["transfer-started", (t) => handlers.onTransferStarted?.(t)],
     ["transfer-resumed", ([transferId, resumedFromBytes]) => handlers.onTransferResumed?.(transferId, resumedFromBytes)],
