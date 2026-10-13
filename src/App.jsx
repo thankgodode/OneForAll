@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 
 import GlobalStyle from "./styles/GlobalStyle";
 import TitleBar from "./components/TitleBar";
@@ -63,6 +63,8 @@ export default function App() {
     confirmations: { files: true, prints: true },
     printPrefs: { autoAccept: false, background: true },
   });
+  const soundEnabledRef = useRef(profile.notifications.sound);
+  soundEnabledRef.current = profile.notifications.sound;
 
   const soundAssets = {
     incoming: new URL("./assets/sounds/incoming.wav", import.meta.url).href,
@@ -78,13 +80,13 @@ export default function App() {
   }, []);
 
   const playNotificationSound = useCallback((soundName) => {
-    if (!profile.notifications.sound) return;
+    if (!soundEnabledRef.current) return;
     const src = soundAssets[soundName];
     if (!src) return;
     const audio = new Audio(src);
     audio.volume = 0.7;
     audio.play().catch(() => {});
-  }, [profile.notifications.sound]);
+  }, []);
 
   // A modal descriptor can carry an optional onCancel — ConfirmModal
   // itself only knows "confirm" vs "close"; this is what lets closing
