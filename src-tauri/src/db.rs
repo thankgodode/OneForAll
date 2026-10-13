@@ -89,6 +89,7 @@ impl Db {
         // (which includes every fresh install, since CREATE TABLE just
         // added it above) — the error is expected and ignored on purpose.
         let _ = conn.execute("ALTER TABLE incomplete_transfers ADD COLUMN interrupted_at INTEGER", []);
+        let _ = conn.execute("ALTER TABLE settings ADD COLUMN confirm_incoming_printing INTEGER NOT NULL DEFAULT 1", []);
         // CHECK (id = 1) above enforces a singleton row; this only fires
         // the very first time the app runs against a fresh database file.
         conn.execute(
@@ -100,14 +101,14 @@ impl Db {
 
     pub fn load_settings(&self) -> rusqlite::Result<PersistedSettings> {
         self.conn.lock().unwrap().query_row(
-            "SELECT display_name, download_dir, confirm_incoming_files, avatar_color FROM settings WHERE id = 1",
+            "SELECT display_name, download_dir, confirm_incoming_files, confirm_incoming_printing, avatar_color FROM settings WHERE id = 1",
             [],
             |row| Ok(PersistedSettings {
                 display_name: row.get(0)?,
                 download_dir: row.get(1)?,
                 confirm_incoming_files: row.get::<_, i64>(2)? != 0,
-                confirm_incoming_printing: row.get::<_, i64>(2)? !=0,
-                avatar_color: row.get(3)?,
+                confirm_incoming_printing: row.get::<_, i64>(3)? != 0,
+                avatar_color: row.get(4)?,
             }),
         )
     }
@@ -120,6 +121,9 @@ impl Db {
     }
     pub fn save_confirm_incoming_files(&self, value: bool) -> rusqlite::Result<()> {
         self.conn.lock().unwrap().execute("UPDATE settings SET confirm_incoming_files = ?1 WHERE id = 1", params![value as i64]).map(|_| ())
+    }
+    pub fn save_confirm_incoming_printing(&self, value: bool) -> rusqlite::Result<()> {
+        self.conn.lock().unwrap().execute("UPDATE settings SET confirm_incoming_printing = ?1 WHERE id = 1", params![value as i64]).map(|_| ())
     }
     pub fn save_avatar_color(&self, color: &str) -> rusqlite::Result<()> {
         self.conn.lock().unwrap().execute("UPDATE settings SET avatar_color = ?1 WHERE id = 1", params![color]).map(|_| ())

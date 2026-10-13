@@ -97,7 +97,7 @@ pub fn set_confirm_incoming_files(settings: tauri::State<'_, Arc<AppSettings>>, 
 #[tauri::command]
 pub fn set_confirm_incoming_printing(settings: tauri::State<'_, Arc<AppSettings>>, db: tauri::State<'_, Arc<Db>>, value: bool) -> Result<(), String> {
     *settings.confirm_incoming_printing.lock().unwrap() = value;
-    db.save_confirm_incoming_files(value).map_err(|e| e.to_string())
+    db.save_confirm_incoming_printing(value).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
