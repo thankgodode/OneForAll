@@ -87,11 +87,11 @@ export default function SettingsView({ profile, setProfile, onSetDisplayName, on
 
       <div className="card" style={{ flex: 1, minWidth: 320, display: "flex", flexDirection: "column", gap: 4 }}>
         <div className="disp" style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
-          <Bell size={15} color="var(--text-tertiary)" /> Notifications
+          <Bell size={15} color="var(--text-tertiary)" /> Notification(s)
         </div>
-        <SettingsRow label="Incoming file alerts" desc="Notify when someone sends you a file" on={profile.notifications.incoming} onClick={() => patchGroup("notifications", "incoming")} />
+        {/* <SettingsRow label="Incoming file alerts" desc="Notify when someone sends you a file" on={profile.notifications.incoming} onClick={() => patchGroup("notifications", "incoming")} />
         <SettingsRow label="Transfer complete" desc="Notify when a transfer finishes" on={profile.notifications.complete} onClick={() => patchGroup("notifications", "complete")} />
-        <SettingsRow label="Print job updates" desc="Notify on print job status changes" on={profile.notifications.print} onClick={() => patchGroup("notifications", "print")} />
+        <SettingsRow label="Print job updates" desc="Notify on print job status changes" on={profile.notifications.print} onClick={() => patchGroup("notifications", "print")} /> */}
         <SettingsRow label="Sound alerts" desc="Play notification sounds whenever the app receives an alert" on={profile.notifications.sound} onClick={() => onSetSoundEnabled(!profile.notifications.sound)} />
 
         <div className="disp" style={{ fontSize: 13, fontWeight: 600, margin: "18px 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
@@ -109,9 +109,9 @@ export default function SettingsView({ profile, setProfile, onSetDisplayName, on
           onClick={() => onSetConfirmPrinting(!profile.confirmations.prints)} 
         />
 
-        <div className="disp" style={{ fontSize: 13, fontWeight: 600, margin: "18px 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
+        {/* <div className="disp" style={{ fontSize: 13, fontWeight: 600, margin: "18px 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
           <Printer size={15} color="var(--text-tertiary)" /> Printing
-        </div>
+        </div> */}
         {/* <SettingsRow label="Auto-accept trusted devices" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.autoAccept} onClick={() => patchGroup("printPrefs", "autoAccept")} />
         <SettingsRow label="Print in background" desc="Not implemented yet — printing is UI-only for now" on={profile.printPrefs.background} onClick={() => patchGroup("printPrefs", "background")} /> */}
       </div>
