@@ -28,6 +28,7 @@ pub struct IncomingFileRequest {
     pub from: PeerInfo,
     pub printer_name: Option<String>,
     pub copies: Option<u32>,
+    pub requires_confirmation: bool,
 }
 
 #[derive(Serialize, Clone)]

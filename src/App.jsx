@@ -147,7 +147,11 @@ export default function App() {
           avatarColor: settings.avatarColor,
           downloadPath: settings.downloadDir,
           notifications: { ...p.notifications, sound: settings.soundEnabled },
-          confirmations: { ...p.confirmations, files: settings.confirmIncomingFiles },
+          confirmations: {
+            ...p.confirmations,
+            files: settings.confirmIncomingFiles,
+            prints: settings.confirmIncomingPrinting,
+          },
         }));
       } catch {
         // fresh install / DB read failed — the defaults already in state are fine
@@ -267,7 +271,9 @@ export default function App() {
         },
 
         onIncomingFileRequest: (req) => {
-          setPendingIncomingFiles((prev) => (prev.some((r) => r.transferId === req.transferId) ? prev : [...prev, req]));
+          if (req.requiresConfirmation) {
+            setPendingIncomingFiles((prev) => (prev.some((r) => r.transferId === req.transferId) ? prev : [...prev, req]));
+          }
           toast(req.printerName ? `Incoming print job: ${req.filename}` : `Incoming file: ${req.filename}`);
           playNotificationSound("incoming");
           if (req.printerName) {
@@ -277,10 +283,18 @@ export default function App() {
               target: "This device",
               printer: req.printerName,
               copies: req.copies ?? 1,
-              status: "pending",
+              status: req.requiresConfirmation ? "pending" : "receiving",
               direction: "receive",
             }, ...prev]);
           }
+        },
+        onIncomingPrintAutoAccepted: (transferIds) => {
+          const acceptedIds = new Set(transferIds);
+          setPendingIncomingFiles((prev) => prev.filter((req) => !acceptedIds.has(req.transferId)));
+          setModal((current) => current?.transferId && acceptedIds.has(current.transferId) ? null : current);
+          setPrintJobs((prev) => prev.map((job) => acceptedIds.has(job.id)
+            ? { ...job, status: "receiving" }
+            : job));
         },
         onTransferStarted: (t) => {
           setTransfers((prev) => (
@@ -384,6 +398,7 @@ export default function App() {
       setPendingIncomingFiles((prev) => prev.filter((r) => r.transferId !== req.transferId));
     };
     setModal({
+      transferId: req.transferId,
       title: req.printerName ? `Print job: ${req.filename}` : `Incoming file: ${req.filename}`,
       body: req.printerName
         ? `${req.from?.displayName || "Someone"} wants to send ${req.filename} (${fmtBytes(req.size)}) to print ${req.copies ?? 1} ${req.copies === 1 || req.copies === undefined || req.copies === null ? "copy" : "copies"} on ${req.printerName}.`
@@ -566,10 +581,14 @@ export default function App() {
     api.setConfirmIncomingFiles(value).catch(() => toast("Failed to save setting", true));
   };
 
-  const handleSetConfirmPrinting = (value) =>{
-    setProfile((p) => ({ ...p, confirmations: { ...p.confirmations, prints: value } }));
-    api.setConfirmIncomingPrinting(value).catch(() => toast("Failed to save setting", true));
-  }
+  const handleSetConfirmPrinting = async (value) => {
+    try {
+      await api.setConfirmIncomingPrinting(value);
+      setProfile((p) => ({ ...p, confirmations: { ...p.confirmations, prints: value } }));
+    } catch {
+      toast("Failed to save setting", true);
+    }
+  };
 
   const handleSetSoundEnabled = (value) => {
     setProfile((p) => ({ ...p, notifications: { ...p.notifications, sound: value } }));
