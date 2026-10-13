@@ -94,7 +94,7 @@ export default function SettingsView({ profile, setProfile, onSetDisplayName, on
         <SettingsRow label="Incoming file alerts" desc="Notify when someone sends you a file" on={profile.notifications.incoming} onClick={() => patchGroup("notifications", "incoming")} />
         <SettingsRow label="Transfer complete" desc="Notify when a transfer finishes" on={profile.notifications.complete} onClick={() => patchGroup("notifications", "complete")} />
         <SettingsRow label="Print job updates" desc="Notify on print job status changes" on={profile.notifications.print} onClick={() => patchGroup("notifications", "print")} />
-        <SettingsRow label="Sound alerts" desc="Play notification sounds when the app is in the background" on={profile.notifications.sound} onClick={() => patchGroup("notifications", "sound")} />
+        <SettingsRow label="Sound alerts" desc="Play notification sounds whenever the app receives an alert" on={profile.notifications.sound} onClick={() => patchGroup("notifications", "sound")} />
 
         <div className="disp" style={{ fontSize: 13, fontWeight: 600, margin: "18px 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
           <ShieldCheck size={15} color="var(--text-tertiary)" /> Confirmations

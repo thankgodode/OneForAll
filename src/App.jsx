@@ -79,7 +79,6 @@ export default function App() {
 
   const playNotificationSound = useCallback((soundName) => {
     if (!profile.notifications.sound) return;
-    if (typeof document !== "undefined" && document.visibilityState === "visible") return;
     const src = soundAssets[soundName];
     if (!src) return;
     const audio = new Audio(src);
