@@ -61,6 +61,8 @@ pub fn run() {
             state::settings::get_settings,
             state::settings::set_display_name,
             state::settings::set_confirm_incoming_files,
+            state::settings::set_confirm_incoming_printing,
+            state::settings::set_sound_enabled,
             state::settings::set_download_dir,
             state::settings::set_avatar_color,
             // session access control

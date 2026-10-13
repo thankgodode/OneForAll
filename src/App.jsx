@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 
 import GlobalStyle from "./styles/GlobalStyle";
 import TitleBar from "./components/TitleBar";
@@ -59,15 +59,33 @@ export default function App() {
     displayName: "You",
     avatarColor: "#3FDCC4",
     downloadPath: "",
-    notifications: { incoming: true, complete: true, print: false },
+    notifications: { incoming: true, complete: true, print: false, sound: true },
     confirmations: { files: true, prints: true },
     printPrefs: { autoAccept: false, background: true },
   });
+  const soundEnabledRef = useRef(profile.notifications.sound);
+  soundEnabledRef.current = profile.notifications.sound;
+
+  const soundAssets = {
+    incoming: new URL("./assets/sounds/incoming.wav", import.meta.url).href,
+    joinrequest: new URL("./assets/sounds/joinrequest.wav", import.meta.url).href,
+    completed: new URL("./assets/sounds/completed.wav", import.meta.url).href,
+    failed: new URL("./assets/sounds/failed.wav", import.meta.url).href,
+  };
 
   const toast = useCallback((message, error) => {
     const id = Math.random().toString(36).slice(2);
     setToasts((t) => [...t, { id, message, error }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3400);
+  }, []);
+
+  const playNotificationSound = useCallback((soundName) => {
+    if (!soundEnabledRef.current) return;
+    const src = soundAssets[soundName];
+    if (!src) return;
+    const audio = new Audio(src);
+    audio.volume = 0.7;
+    audio.play().catch(() => {});
   }, []);
 
   // A modal descriptor can carry an optional onCancel — ConfirmModal
@@ -128,6 +146,7 @@ export default function App() {
           displayName: settings.displayName,
           avatarColor: settings.avatarColor,
           downloadPath: settings.downloadDir,
+          notifications: { ...p.notifications, sound: settings.soundEnabled },
           confirmations: { ...p.confirmations, files: settings.confirmIncomingFiles },
         }));
       } catch {
@@ -202,6 +221,8 @@ export default function App() {
 
         onJoinRequested: (peer) => {
           setPendingJoins((prev) => (prev.some((p) => p.id === peer.id) ? prev : [...prev, peer]));
+          toast(`Join request from ${peer.displayName}`);
+          playNotificationSound("joinrequest");
         },
         onJoinPending: () => {
           setNetwork((n) => ({ ...n, joinStatus: "pending" }));
@@ -247,6 +268,8 @@ export default function App() {
 
         onIncomingFileRequest: (req) => {
           setPendingIncomingFiles((prev) => (prev.some((r) => r.transferId === req.transferId) ? prev : [...prev, req]));
+          toast(req.printerName ? `Incoming print job: ${req.filename}` : `Incoming file: ${req.filename}`);
+          playNotificationSound("incoming");
           if (req.printerName) {
             setPrintJobs((prev) => prev.some((job) => job.id === req.transferId) ? prev : [{
               id: req.transferId,
@@ -306,20 +329,32 @@ export default function App() {
         },
         onTransferCompleted: (transferId) => {
           updateTransfer(transferId, { status: "completed", progress: 100 });
+          toast("Transfer complete");
+          playNotificationSound("completed");
         },
         onTransferFailed: (transferId, reason) => {
           updateTransfer(transferId, { status: "failed", error: reason });
+          toast(`Transfer failed: ${reason}`, true);
+          playNotificationSound("failed");
         },
         onTransferCancelled: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Cancelled" });
+          toast("Transfer cancelled", true);
+          playNotificationSound("failed");
         },
         onTransferRejected: (transferId) => {
           updateTransfer(transferId, { status: "failed", error: "Rejected by recipient" });
+          toast("Transfer rejected", true);
+          playNotificationSound("failed");
         },
         onPrintJobStatus: ({ transferId, status, error }) => {
           setPrintJobs((prev) => prev.map((job) => job.id === transferId
             ? { ...job, status, error: error ?? undefined }
             : job));
+          if (status === "failed" || status === "rejected") {
+            toast(`Print failed: ${error || "unknown error"}`, true);
+            playNotificationSound("failed");
+          }
         },
       });
 
@@ -531,6 +566,16 @@ export default function App() {
     api.setConfirmIncomingFiles(value).catch(() => toast("Failed to save setting", true));
   };
 
+  const handleSetConfirmPrinting = (value) =>{
+    setProfile((p) => ({ ...p, confirmations: { ...p.confirmations, prints: value } }));
+    api.setConfirmIncomingPrinting(value).catch(() => toast("Failed to save setting", true));
+  }
+
+  const handleSetSoundEnabled = (value) => {
+    setProfile((p) => ({ ...p, notifications: { ...p.notifications, sound: value } }));
+    api.setSoundEnabled(value).catch(() => toast("Failed to save sound setting", true));
+  };
+
   const handleSetDownloadDir = (path) => {
     setProfile((p) => ({ ...p, downloadPath: path }));
     api.setDownloadDir(path).catch(() => toast("Failed to save download location", true));
@@ -600,6 +645,8 @@ export default function App() {
                 onSetDisplayName={handleSetDisplayName}
                 onSetAvatarColor={handleSetAvatarColor}
                 onSetConfirmFiles={handleSetConfirmFiles}
+                onSetConfirmPrinting={handleSetConfirmPrinting}
+                onSetSoundEnabled={handleSetSoundEnabled}
                 onSetDownloadDir={handleSetDownloadDir}
                 deviceName={deviceName}
                 myListenPort={myListenPort}

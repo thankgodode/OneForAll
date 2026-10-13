@@ -16,6 +16,8 @@ export const getPrinters = () => invoke("get_printers");
 export const getSettings = () => invoke("get_settings");
 export const setDisplayName = (name) => invoke("set_display_name", { name });
 export const setConfirmIncomingFiles = (value) => invoke("set_confirm_incoming_files", { value });
+export const setConfirmIncomingPrinting = (value) => invoke("set_confirm_incoming_printing", { value });
+export const setSoundEnabled = (value) => invoke("set_sound_enabled", { value });
 export const setDownloadDir = (path) => invoke("set_download_dir", { path });
 export const setAvatarColor = (color) => invoke("set_avatar_color", { color });
 
