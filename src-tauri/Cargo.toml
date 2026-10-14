@@ -1,6 +1,6 @@
 [package]
-name = "nearby-backend"
-version = "0.1.0"
+name = "oneforall-backend"
+version = "0.1.0-beta.1"
 edition = "2021"
 
 # This is the src-tauri crate — pair it with the frontend project from
