@@ -3529,7 +3529,7 @@ dependencies = [
 
 [[package]]
 name = "nearby-backend"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 dependencies = [
  "bincode",
  "dirs 5.0.1",
